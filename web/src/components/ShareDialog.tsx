@@ -1,10 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { createPortal } from 'react-dom'
+import { useEffect, useMemo, useState } from 'react'
 import { buildCollection, normalizeSpec, redactSpec, type CurlSpec, type Environment } from '@curlviz/core'
 import type { ShareTarget } from './CollectionsPanel'
+import { Overlay } from './Overlay'
 import { createPayload, encodeShare, buildShareUrl, shareSizeHint, QR_MAX_BYTES, type SharePayload } from '../lib/share'
-import { cycleIndex, FOCUSABLE_SELECTOR } from '../lib/focus'
 import { copyText } from '../lib/clipboard'
 import { downloadBytes, downloadText, safeFileName } from '../lib/file'
 
@@ -29,6 +27,8 @@ function prepare(spec: CurlSpec, redact: boolean): CurlSpec {
  *    "环境里的值原样出去，脱敏只管 Authorization / Cookie"；
  *  - 长度超了二维码上限就直说"这份只能走链接或导出文件"，不做"缩小一点也许能扫"的猜测；
  *  - 二维码用本地 qrcode 生成（动态 import，不进首屏包），绝不叫在线二维码服务。
+ *
+ * 弹层本身（portal、Escape、焦点进出、Tab 圈定）是 Overlay 的事，见 hooks/useModalShell。
  */
 export function ShareDialog({ target, environments, defaultRedact, onClose, onNotice }: Props) {
   const [redact, setRedact] = useState(defaultRedact)
@@ -96,172 +96,109 @@ export function ShareDialog({ target, environments, defaultRedact, onClose, onNo
     }
   }, [shareText])
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-
-  const dialogRef = useRef<HTMLDivElement>(null)
-
-  /**
-   * 焦点进出这个弹窗。
-   *
-   * 打开时不接管焦点的话，键盘与读屏用户还停在背景里那颗「分享」上，Tab 一下就走回页面；
-   * 关闭时必须交还给唤起它的那个元素 —— 不交还就掉回文档开头，
-   * 想接着操作得从头 Tab 几十下，这条路径上没人会认为自己用的是个能用的界面。
-   *
-   * 背景同时设 inert，让弹窗外的东西既点不到也 Tab 不到，读屏也不会念到外面。
-   * 老浏览器不认 inert 时退化成只靠下面的 Tab 圈定 —— 焦点照样出不去，
-   * 只是背景还能点、还能被读屏念到；这个退化不影响把分享链接拿到手，就不为它加更多代码。
-   */
-  useEffect(() => {
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const root = document.getElementById('root')
-    const supportsInert = 'inert' in HTMLElement.prototype
-    if (supportsInert) root?.setAttribute('inert', '')
-    dialogRef.current?.focus()
-    return () => {
-      if (supportsInert) root?.removeAttribute('inert')
-      if (opener !== null && document.contains(opener)) opener.focus()
-    }
-  }, [])
-
-  /** 把 Tab 圈在弹窗里：列表算术在 lib/focus 里测过，这里只做 DOM 那半边。 */
-  const trapTab = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
-    if (e.key !== 'Tab' || dialogRef.current === null) return
-    const items = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
-      // disabled 与看不见的人都拿不到焦点：把他们算进序列会让 Tab 从 trap 里漏出去
-      (el) => !el.hasAttribute('disabled') && el.getClientRects().length > 0
-    )
-    const at = items.indexOf(document.activeElement as HTMLElement)
-    const next = cycleIndex(items.length, at, e.shiftKey ? -1 : 1)
-    if (next < 0) return
-    e.preventDefault()
-    items[next]?.focus()
-  }
-
   const url = useMemo(() => (shareText === '' ? '' : buildShareUrl(shareText)), [shareText])
   const size = shareText === '' ? null : shareSizeHint(shareText)
 
-  // 挂到 body：要 inert 的是 #root（整个应用），弹窗自己不能也在里面。
-  // backdrop 本来就是 position:fixed 铺满视口，换个宿主看不出视觉差别
-  return createPortal(
-    <div className="backdrop" onClick={onClose}>
-      <div
-        className="modal"
-        ref={dialogRef}
-        // tabIndex={-1} 让容器能被 focus() 拿走却不进 Tab 顺序：打开时焦点先落在这儿，
-        // 读屏才会当场念出这个 dialog 的标题，而不是等用户按下第一下 Tab 才知道弹窗开了
-        tabIndex={-1}
-        onKeyDown={trapTab}
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-label="分享"
-      >
-        <h2>
-          分享「{target.label}」
-          <span className="muted">（{isCollection ? '整个集合' : '单个请求'}）</span>
-        </h2>
+  return (
+    <Overlay label={`分享「${target.label}」`} onClose={onClose}>
+      <h2>
+        分享「{target.label}」
+        <span className="muted">（{isCollection ? '整个集合' : '单个请求'}）</span>
+      </h2>
 
-        <div className="row" style={{ gap: '1rem' }}>
+      <div className="row" style={{ gap: '1rem' }}>
+        <label className="inline-check">
+          <input type="checkbox" checked={redact} onChange={(e) => setRedact(e.target.checked)} />
+          抹掉凭据（Authorization / Proxy-Authorization / Cookie）
+        </label>
+        {isCollection && (
           <label className="inline-check">
-            <input type="checkbox" checked={redact} onChange={(e) => setRedact(e.target.checked)} />
-            抹掉凭据（Authorization / Proxy-Authorization / Cookie）
+            <input type="checkbox" checked={includeEnvs} onChange={(e) => setIncludeEnvs(e.target.checked)} />
+            带上环境变量（{environments.length} 个环境）
           </label>
-          {isCollection && (
-            <label className="inline-check">
-              <input type="checkbox" checked={includeEnvs} onChange={(e) => setIncludeEnvs(e.target.checked)} />
-              带上环境变量（{environments.length} 个环境）
-            </label>
-          )}
-        </div>
-        {!redact && <p className="warn-text">没勾脱敏：token、密码会一起进链接，收的人拿到就是明文。</p>}
-        {includeEnvs && redact && (
-          <p className="warn-text">
-            勾了带环境：脱敏只管请求头里的凭据，环境里的变量值（内网地址、token）会原样带出去，确认过再发。
-          </p>
         )}
-
-        {busy && <p className="muted">正在本地压缩…</p>}
-        {error && <p className="warn-text">{error}</p>}
-
-        {!busy && !error && shareText !== '' && (
-          <>
-            <p className="muted">
-              {size?.bytes ?? 0} 字节，本地 gzip + base64url 生成，不经过任何服务器
-              {isCollection && !includeEnvs ? '，也没带环境变量' : ''}。
-              {size?.message ? ` ${size.message}` : ''}
-            </p>
-
-            <label>分享链接（对方打开就自动导入）</label>
-            <div className="row">
-              <input className="grow mono" readOnly value={url} onFocus={(e) => e.target.select()} />
-              <button
-                className="mini"
-                onClick={async () => {
-                  onNotice((await copyText(url)) ? '链接已复制。' : '没复制上，手动选一下吧。')
-                }}
-              >
-                复制链接
-              </button>
-            </div>
-
-            <label style={{ marginTop: '0.6rem' }}>分享码（也能贴到群里，本工具认得）</label>
-            <textarea rows={4} readOnly spellCheck={false} value={shareText} onFocus={(e) => e.target.select()} />
-            <div className="row" style={{ marginTop: '0.4rem' }}>
-              <button
-                className="mini"
-                onClick={async () => {
-                  onNotice((await copyText(shareText)) ? '分享码已复制。' : '没复制上，手动选一下吧。')
-                }}
-              >
-                复制分享码
-              </button>
-              <button
-                className="mini"
-                onClick={() => {
-                  downloadText(safeFileName([target.label, 'curlviz-share'], '.txt'), shareText, 'text/plain')
-                }}
-              >
-                存成 .txt
-              </button>
-            </div>
-
-            <div className="qr-box">
-              {qr && (
-                <>
-                  <img src={qr} alt="分享二维码" width={230} height={230} />
-                  <div>
-                    <p className="muted">手机扫码即可导入（同一套 curlviz:1: 格式，安卓端也能读）。</p>
-                    <button
-                      className="mini"
-                      onClick={() => {
-                        const bytes = atob(qr.split(',')[1] ?? '')
-                        const arr = new Uint8Array(bytes.length)
-                        for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i)
-                        downloadBytes(safeFileName([target.label, 'curlviz-qr'], '.png'), arr, 'image/png')
-                      }}
-                    >
-                      下载二维码 PNG
-                    </button>
-                  </div>
-                </>
-              )}
-              {!qr && <p className="muted">{qrError ?? '二维码生成中…'}</p>}
-            </div>
-          </>
-        )}
-
-        <div className="row" style={{ marginTop: '0.8rem' }}>
-          <button onClick={onClose}>关闭</button>
-          <span className="muted">链接走 #share=，不会进服务端访问日志，也不会被 referer 带出去。</span>
-        </div>
       </div>
-    </div>,
-    document.body
+      {!redact && <p className="warn-text">没勾脱敏：token、密码会一起进链接，收的人拿到就是明文。</p>}
+      {includeEnvs && redact && (
+        <p className="warn-text">
+          勾了带环境：脱敏只管请求头里的凭据，环境里的变量值（内网地址、token）会原样带出去，确认过再发。
+        </p>
+      )}
+
+      {busy && <p className="muted">正在本地压缩…</p>}
+      {error && <p className="warn-text">{error}</p>}
+
+      {!busy && !error && shareText !== '' && (
+        <>
+          <p className="muted">
+            {size?.bytes ?? 0} 字节，本地 gzip + base64url 生成，不经过任何服务器
+            {isCollection && !includeEnvs ? '，也没带环境变量' : ''}。
+            {size?.message ? ` ${size.message}` : ''}
+          </p>
+
+          <label>分享链接（对方打开就自动导入）</label>
+          <div className="row">
+            <input className="grow mono" readOnly value={url} onFocus={(e) => e.target.select()} />
+            <button
+              className="mini"
+              onClick={async () => {
+                onNotice((await copyText(url)) ? '链接已复制。' : '没复制上，手动选一下吧。')
+              }}
+            >
+              复制链接
+            </button>
+          </div>
+
+          <label style={{ marginTop: '0.6rem' }}>分享码（也能贴到群里，本工具认得）</label>
+          <textarea rows={4} readOnly spellCheck={false} value={shareText} onFocus={(e) => e.target.select()} />
+          <div className="row" style={{ marginTop: '0.4rem' }}>
+            <button
+              className="mini"
+              onClick={async () => {
+                onNotice((await copyText(shareText)) ? '分享码已复制。' : '没复制上，手动选一下吧。')
+              }}
+            >
+              复制分享码
+            </button>
+            <button
+              className="mini"
+              onClick={() => {
+                downloadText(safeFileName([target.label, 'curlviz-share'], '.txt'), shareText, 'text/plain')
+              }}
+            >
+              存成 .txt
+            </button>
+          </div>
+
+          <div className="qr-box">
+            {qr && (
+              <>
+                <img src={qr} alt="分享二维码" width={230} height={230} />
+                <div>
+                  <p className="muted">手机扫码即可导入（同一套 curlviz:1: 格式，安卓端也能读）。</p>
+                  <button
+                    className="mini"
+                    onClick={() => {
+                      const bytes = atob(qr.split(',')[1] ?? '')
+                      const arr = new Uint8Array(bytes.length)
+                      for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i)
+                      downloadBytes(safeFileName([target.label, 'curlviz-qr'], '.png'), arr, 'image/png')
+                    }}
+                  >
+                    下载二维码 PNG
+                  </button>
+                </div>
+              </>
+            )}
+            {!qr && <p className="muted">{qrError ?? '二维码生成中…'}</p>}
+          </div>
+        </>
+      )}
+
+      <div className="row" style={{ marginTop: '0.8rem' }}>
+        <button onClick={onClose}>关闭</button>
+        <span className="muted">链接走 #share=，不会进服务端访问日志，也不会被 referer 带出去。</span>
+      </div>
+    </Overlay>
   )
 }

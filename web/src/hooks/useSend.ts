@@ -114,10 +114,18 @@ export function useSend(input: SendInput): Sender {
   // Ctrl/Cmd+Enter 发送：改一条命令要按几十次，少一次鼠标位移
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && canSend && !sending) {
-        e.preventDefault()
-        void send()
-      }
+      if (!(e.ctrlKey || e.metaKey) || e.key !== 'Enter') return
+      if (!canSend || sending) return
+      /**
+       * 有弹层开着就不抢这颗键。
+       * 粘贴导入框里按 Ctrl+Enter 的意思是"解析我粘的这段"，同一次按键顺手把编辑器里
+       * 那条旧命令发出去，等于白送一个请求出去 —— 而抽屉里那些按钮（存入 / 打开）
+       * 本身也认这颗键。判断只看有没有 dialog，不看谁持有焦点：
+       * 焦点这时可能在 textarea、可能在容器自己身上，两种都得拦住。
+       */
+      if (document.querySelector('[role="dialog"]') !== null) return
+      e.preventDefault()
+      void send()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
