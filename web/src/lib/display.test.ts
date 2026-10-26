@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createDefaultSpec, type CurlSpec } from '@curlviz/core'
-import { extOf, historySummary, suggestName, usedVars } from './display'
+import { extOf, historySummary, prefersReducedMotion, scrollBehaviorFor, suggestName, usedVars } from './display'
 import type { HistoryEntry } from '../types'
 
 function entry(result?: HistoryEntry['result']): HistoryEntry {
@@ -72,5 +72,18 @@ describe('historySummary', () => {
 
   it('失败：直接显示失败原因（历史列表不展开响应体，避免泄密）', () => {
     expect(historySummary(entry({ error: '请求没能完成' }))).toBe('请求没能完成')
+  })
+})
+
+describe('跳转滚动该不该平滑', () => {
+  it('勾了"减少动态效果"就立刻到位，没勾才滑过去', () => {
+    expect(scrollBehaviorFor(true)).toBe('auto')
+    expect(scrollBehaviorFor(false)).toBe('smooth')
+  })
+
+  it('读不到 matchMedia 时当没勾，而不是抛错', () => {
+    // 这条测的正是"测试环境里没有 window"这个事实：抽屉的跳转 effect 要调它，
+    // 它一抛错，那三颗跳转按钮就变成点了没反应的那种最难发现的坏
+    expect(prefersReducedMotion()).toBe(false)
   })
 })

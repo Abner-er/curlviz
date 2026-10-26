@@ -65,26 +65,53 @@ header.top .tag {
 }
 
 /*
- * 三栏 shell：资料库 / 工作台 / 结果。
- * 根字号 17px，所以 1rem ≈ 17px —— 下面这几档宽度是按"三栏各自放得下什么"倒推的，
- * 不是随手挑的整数：左栏要能放下集合条目那一行按钮（约 408px），
- * 中栏要放得下 URL 条与 curl 预览（约 510px），右栏要放得下响应体（约 442px）。
+ * 顶栏的环境读数。它是"看一眼 + 点进去改"，不是就地能换的下拉框，
+ * 所以画成虚线边的小胶囊：跟旁边那些实线输入控件区别开，
+ * 免得用户以为在这儿就能选环境（那是抽屉里那一处入口的事）。
+ */
+.env-chip {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  min-height: 1.7rem;
+  padding: 0.1rem 0.55rem;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  background: transparent;
+  font-size: 0.78rem;
+  color: var(--fg-dim);
+}
+
+.env-chip:hover:not(:disabled) {
+  color: var(--fg);
+}
+
+/*
+ * 两栏 shell：工作台 / 结果。资料库不在这里占栏 —— 它是按需拉开的右侧抽屉（见 .backdrop-drawer），
+ * 因为主动作是"改命令、发出去、看结果"，整页宽度都该给这几件事。
+ * 根字号 17px，所以 1rem ≈ 17px —— 下面这几档宽度是按"两边各自放得下什么"倒推的，
+ * 不是随手挑的整数：工作台要放得下 URL 条与 curl 预览（约 510px），
+ * 结果栏要放得下响应体（约 442px），两栏加间距加页边到 1100px 就顶不住了，以下改成上下排。
  */
 main {
   display: grid;
   gap: 1rem;
   padding: 1rem;
   align-items: start;
-  grid-template-columns: minmax(24rem, 26rem) minmax(30rem, 1fr) minmax(26rem, 1fr);
-  grid-template-areas: "lib work result";
+  grid-template-columns: minmax(32rem, 1.5fr) minmax(26rem, 1fr);
+  grid-template-areas: "work result";
 }
 
-.shell-lib {
-  grid-area: lib;
+.shell-work {
+  grid-area: work;
+}
+
+.shell-result {
+  grid-area: result;
   /*
-   * 资料库 sticky 且自己滚动：库里的集合一多，跟着整页滚会把工作台与 curl 预览顶出屏幕，
-   * 而"看着命令改、从库里挑下一条"正是这个工具的主要动作。
-   * top 值要给粘性 header 让位（header 约 3.2rem 高）。
+   * 结果栏 sticky 且自己滚动：工作台比它长（表单 + curl 预览），
+   * 跟着整页滚的话，往下改参数时响应就滚出屏幕了，而"边改边看上一条返回什么"
+   * 正是排查接口时的常态。top 值给粘性 header 让位（header 约 3.2rem 高）。
    */
   position: sticky;
   top: 3.6rem;
@@ -94,58 +121,21 @@ main {
   padding-right: 0.15rem;
 }
 
-.shell-work {
-  grid-area: work;
-}
-
-.shell-result {
-  grid-area: result;
-}
-
-/* 中屏：资料库继续占住左边一整列，工作台与结果改成上下排 */
-@media (max-width: 1440px) {
-  main {
-    grid-template-columns: minmax(22rem, 24rem) minmax(0, 1fr);
-    grid-template-areas:
-      "lib work"
-      "lib result";
-  }
-}
-
-/* 窄屏（含手机与分屏）：单列，顺序仍是"先选东西、再改命令、最后看结果" */
-@media (max-width: 1024px) {
+/* 窄屏（含手机与分屏）：单列，顺序仍是"先改命令、再看结果" */
+@media (max-width: 1100px) {
   main {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
-      "lib"
       "work"
       "result";
   }
 
   /* 单列时 sticky 与自身滚动都没意义：让它跟着页面正常流下去 */
-  .shell-lib {
+  .shell-result {
     position: static;
     max-height: none;
     overflow-y: visible;
   }
-}
-
-.lib-bar {
-  display: flex;
-  gap: 0.4rem;
-  align-items: center;
-  padding: 0.3rem 0.1rem 0.5rem;
-  position: sticky;
-  top: 0;
-  background: var(--bg);
-  z-index: 2;
-}
-
-.lib-bar strong {
-  font-size: 0.82rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--fg-dim);
 }
 
 section.card {
@@ -560,12 +550,80 @@ label.inline-check,
   width: min(46rem, 100%);
 }
 
-.modal h2 {
+.modal h2,
+.drawer h2 {
   font-size: 0.95rem;
   margin: 0 0 0.6rem;
   text-transform: none;
   letter-spacing: 0;
   color: var(--fg);
+}
+
+/* ---------------- 资料库抽屉 ---------------- */
+
+/* 抽屉贴右边、整高：居中那块的行为（上下留 2rem、可滚出视口）在这里全用不上 */
+.backdrop-drawer {
+  align-items: stretch;
+  justify-content: flex-end;
+  padding: 0;
+  overflow: hidden;
+}
+
+.drawer {
+  /*
+   * 宽度是笔取舍：一边要够放下集合条目那一行按钮（折成两三行就得在滚动里做算术），
+   * 另一边不能宽到变成"第二个整屏"—— 抽屉后面还得看得见工作区在动，
+   * 用户才知道改的东西落哪儿了。34rem 是这两条之间的位置，浏览器验收时若还挤就调这一处。
+   */
+  width: min(34rem, 92vw);
+  margin-left: auto;
+  height: 100%;
+  background: var(--bg-2);
+  border-left: 1px solid var(--accent);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* 内边距交给 .drawer-bar / .drawer-body 各自负责：抽屉自己不留 padding，
+     那条吸顶栏才真能盖住从它底下滚过去的内容 */
+  padding: 0;
+}
+
+/* 吸顶的一整块：标题行 + 三节跳转。分两条 sticky 会互相压不住，合一条省事 */
+.drawer-bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-2);
+  padding: 0.7rem 0.9rem 0.4rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.drawer-title {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.drawer-title h2 {
+  margin: 0;
+}
+
+.drawer-jump {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+
+.drawer-body {
+  padding: 0.8rem 0.9rem 1rem;
+}
+
+/* 跳过去的某一节要停在吸顶栏下面，而不是正好被它盖住。
+   吸顶栏是"标题行 + 跳转行"两段，按当前字号约 5rem 上下；这里留到 6rem，
+   多出来那点是给换行留的余地 —— 窄抽屉里跳转钮折成两行时栏会变高 */
+.lib-sec {
+  scroll-margin-top: 6rem;
 }
 
 .qr-box {
@@ -601,15 +659,17 @@ button:focus-visible {
   outline-offset: 1px;
 }
 
-/* 弹窗容器打开时焦点先落它身上（好让读屏当场念出标题），但它不该有一圈描边：
+/* 弹层容器打开时焦点先落它身上（好让读屏当场念出标题），但它不该有一圈描边：
    套住整块的边框会让人以为全部内容被选中了 */
 .modal:focus,
-.modal:focus-visible {
+.modal:focus-visible,
+.drawer:focus,
+.drawer:focus-visible {
   outline: none;
 }
 
-/* 左栏是 sticky + 自身滚动：焦点走到看不见的地方时要留出身位，
-   否则滚过去的部分正好贴在栏顶被"资料库"那条吸顶工具栏盖住 */
-.shell-lib :focus-visible {
-  scroll-margin-top: 3.2rem;
+/* 抽屉是自己滚动的：焦点走到看不见的地方时要留出身位，
+   否则刚 Tab 出去的按钮正好贴在吸顶栏底下，看着像没反应 */
+.drawer :focus-visible {
+  scroll-margin-top: 6rem;
 }

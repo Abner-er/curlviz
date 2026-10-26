@@ -62,3 +62,25 @@ export function historySummary(entry: HistoryEntry): string {
   const spent = ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms)}ms`
   return `${entry.result.status} · ${spent}`
 }
+
+/**
+ * 点「环境 · 变量」这类跳转按钮时，该不该用平滑滚动。
+ *
+ * 样式表里那条 prefers-reduced-motion 只管得住 CSS 动画与 transition，
+ * 管不住 JS 的 scrollIntoView({behavior:'smooth'}) —— 勾了"减少动态效果"的人
+ * 照样会被强制晃一下。这个决定只能在调用点上做，所以得是个能测的函数。
+ */
+export function scrollBehaviorFor(reduceMotion: boolean): 'auto' | 'smooth' {
+  return reduceMotion ? 'auto' : 'smooth'
+}
+
+/**
+ * 系统有没有勾"减少动态效果"。
+ *
+ * 只在浏览器的事件处理里调用，不进渲染：渲染里读 window 会让 SSR 冒烟测试直接炸。
+ * 拿不到 matchMedia（老浏览器 / 测试环境）就当没勾 —— 猜错的最坏结果只是一下平滑滚动。
+ */
+export function prefersReducedMotion(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
