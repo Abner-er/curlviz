@@ -37,7 +37,7 @@ export function ResponsePanel({ report, sending }: Props) {
 
       {sending && <p className="muted">请求已发出，等待响应…（浏览器不给建连/ TLS 分段耗时，只能给总耗时）</p>}
 
-      {!report && !sending && <p className="muted">还没发过。填好左侧点「发送」，或复制到终端里跑。</p>}
+      {!report && !sending && <p className="muted">还没发过。填好 URL 点「发送」，或复制到终端里跑。</p>}
 
       {failure && (
         <>

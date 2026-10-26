@@ -36,7 +36,7 @@ describe('App 首屏', () => {
     expect(html).toContain('填了 URL 才能发送')
   })
 
-  it('M2 的三个新面板都在首屏里：集合库、导入导出、环境选择器', () => {
+  it('M2 的三个新面板都在首屏里：集合库、导入导出、环境面板', () => {
     const html = renderToString(<App />)
     // 空库状态也不能是一片空白，要告诉用户这东西怎么用
     expect(html).toContain('还没有存过请求')
@@ -44,5 +44,50 @@ describe('App 首屏', () => {
     expect(html).toContain('导入 / 导出')
     expect(html).toContain('拖到这里')
     expect(html).toContain('不启用')
+  })
+})
+
+/**
+ * 三栏 shell 是 UI 重排的结论本身，不是实现细节：
+ * 布局一旦飘回"两栏 + 预览在右栏"，读命令要跨过整个响应区，
+ * 而这条是最难在人工点验时发现退化的（看起来还是那个界面）。
+ */
+describe('三栏 shell', () => {
+  it('资料库 / 工作台 / 结果三个区域各就各位', () => {
+    const html = renderToString(<App />)
+    expect(html).toContain('class="shell-lib"')
+    expect(html).toContain('class="shell-work"')
+    expect(html).toContain('class="shell-result"')
+    expect(html).toContain('资料库')
+  })
+
+  it('curl 预览跟在工作台里、且在响应区之前（改一个参数要立刻看到命令怎么变）', () => {
+    const html = renderToString(<App />)
+    const work = html.indexOf('class="shell-work"')
+    const result = html.indexOf('class="shell-result"')
+    const preview = html.indexOf('等价 curl')
+    const response = html.indexOf('<h2>响应</h2>')
+    expect(work).toBeGreaterThan(-1)
+    expect(preview).toBeGreaterThan(work)
+    expect(preview).toBeLessThan(result)
+    expect(response).toBeGreaterThan(result)
+  })
+
+  it('环境只有一个入口：顶栏那个重复选择器已经没了', () => {
+    const html = renderToString(<App />)
+    // 顶栏曾经有 title="切换当前环境变量集" 的 select，与左栏「当前环境」是同一件事的两个入口
+    expect(html).not.toContain('切换当前环境变量集')
+    expect(html).toContain('当前环境')
+  })
+
+  it('表单只剩五个页签，变量不再挤在里面（它属于资料库，不属于这条命令本身）', () => {
+    const html = renderToString(<App />)
+    // 只截页签那一小段来判：整页里"变量"这两个字还会出现（环境表格的列名），
+    // 那是对的，不能被这条断言误伤
+    const nav = /<nav class="tabs">.*?<\/nav>/.exec(html)?.[0] ?? ''
+    expect(nav).toContain('Query')
+    expect(nav).toContain('选项')
+    expect(nav).not.toContain('变量')
+    expect(nav.match(/<button/g)?.length).toBe(5)
   })
 })

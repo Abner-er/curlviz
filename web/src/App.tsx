@@ -22,7 +22,7 @@ import { CollectionsPanel, type ShareTarget } from './components/CollectionsPane
 import { IoPanel } from './components/IoPanel'
 import { ShareDialog } from './components/ShareDialog'
 
-type Tab = 'query' | 'headers' | 'body' | 'auth' | 'options' | 'vars'
+type Tab = 'query' | 'headers' | 'body' | 'auth' | 'options'
 
 const DEFAULT_SETTINGS: Settings = { quoteStyle: 'posix', multiline: true, redactHistory: true }
 
@@ -78,6 +78,8 @@ export function App() {
 
   const [tab, setTab] = useState<Tab>('query')
   const [importOpen, setImportOpen] = useState(false)
+  /** 左栏（资料库）收起：小屏或要看长命令时把工作区让出来。默认展开 —— 收起状态不该是开机意外看到的。 */
+  const [libOpen, setLibOpen] = useState(true)
   const [share, setShare] = useState<ShareTarget | null>(null)
   const [toast, setToast] = useState<string | null>(null)
 
@@ -141,8 +143,7 @@ export function App() {
     { value: 'headers', label: 'Headers', badge: wb.spec.headers.filter((h) => h.enabled && h.key !== '').length },
     { value: 'body', label: 'Body', badge: wb.spec.body.type === 'none' ? 0 : 1 },
     { value: 'auth', label: 'Auth', badge: wb.spec.auth.type === 'none' ? 0 : 1 },
-    { value: 'options', label: '选项', badge: wb.spec.rawArgs.length },
-    { value: 'vars', label: '变量', badge: Object.keys(vars).length }
+    { value: 'options', label: '选项', badge: wb.spec.rawArgs.length }
   ]
 
   return (
@@ -151,27 +152,6 @@ export function App() {
         <h1>CurlViz</h1>
         <span className="tag">curl 可视化 · 免登录 / 不过云 / 数据全本地</span>
         <div className="grow" />
-        <label style={{ margin: 0 }}>
-          环境
-          <select
-            value={envState.activeName ?? ''}
-            onChange={(e) =>
-              setEnvState((old) => ({
-                ...old,
-                activeName: old.environments.find((x) => x.name === e.target.value)?.name ?? null
-              }))
-            }
-            style={{ marginLeft: '0.35rem', maxWidth: '10rem' }}
-            title="切换当前环境变量集"
-          >
-            <option value="">不启用</option>
-            {envState.environments.map((e) => (
-              <option key={e.name} value={e.name}>
-                {e.name}
-              </option>
-            ))}
-          </select>
-        </label>
         <label style={{ margin: 0 }}>
           引号
           <select
@@ -202,25 +182,67 @@ export function App() {
       </header>
 
       <main>
-        <div>
+        <div className="shell-lib">
+          <div className="lib-bar">
+            <strong>资料库</strong>
+            <span className="grow" />
+            <button
+              className="mini"
+              onClick={() => setLibOpen((v) => !v)}
+              aria-expanded={libOpen}
+              title={libOpen ? '收起资料库，把工作区让给命令' : '展开资料库'}
+            >
+              {libOpen ? '收起' : '展开'}
+            </button>
+          </div>
+
+          {libOpen && (
+            <>
+              <CollectionsPanel
+                state={colState}
+                environments={envState.environments}
+                currentSpec={wb.spec}
+                activeRef={wb.activeRef}
+                defaultRedact={settings.redactHistory}
+                onStateChange={setColState}
+                onOpen={openFromCollection}
+                onSaved={wb.bind}
+                onShare={setShare}
+                onNotice={notify}
+              />
+
+              <section className="card">
+                <h2>
+                  环境 · 变量
+                  {envState.activeName !== null && <span className="tag-mini">{Object.keys(vars).length}</span>}
+                </h2>
+                {/* 环境只有这一个入口：原来顶栏还有一个选择器，两个地方改同一个状态，
+                    人会不确定"现在生效的到底是哪个" */}
+                <VarsPanel spec={wb.spec} state={envState} onChange={setEnvState} />
+              </section>
+
+              <IoPanel
+                colState={colState}
+                envState={envState}
+                currentSpec={wb.spec}
+                currentName={boundEntry?.request ?? wb.spec.name}
+                defaultRedact={settings.redactHistory}
+                onColState={setColState}
+                onEnvState={setEnvState}
+                onApplySpec={(s) => load({ spec: s })}
+                onImportCurl={onImport}
+                onNotice={notify}
+              />
+            </>
+          )}
+        </div>
+
+        <div className="shell-work">
           {persistence.storageIssue && (
             <ul className="notes" style={{ marginBottom: '0.8rem' }}>
               <li className="err">{persistence.storageIssue}</li>
             </ul>
           )}
-
-          <CollectionsPanel
-            state={colState}
-            environments={envState.environments}
-            currentSpec={wb.spec}
-            activeRef={wb.activeRef}
-            defaultRedact={settings.redactHistory}
-            onStateChange={setColState}
-            onOpen={openFromCollection}
-            onSaved={wb.bind}
-            onShare={setShare}
-            onNotice={notify}
-          />
 
           <section className="card">
             <h2>请求</h2>
@@ -336,30 +358,19 @@ export function App() {
                 onDropRawArg={(i) => wb.patch({ rawArgs: wb.spec.rawArgs.filter((_, k) => k !== i) })}
               />
             )}
-            {tab === 'vars' && <VarsPanel spec={wb.spec} state={envState} onChange={setEnvState} />}
           </section>
 
-          <IoPanel
-            colState={colState}
-            envState={envState}
-            currentSpec={wb.spec}
-            currentName={boundEntry?.request ?? wb.spec.name}
-            defaultRedact={settings.redactHistory}
-            onColState={setColState}
-            onEnvState={setEnvState}
-            onApplySpec={(s) => load({ spec: s })}
-            onImportCurl={onImport}
-            onNotice={notify}
-          />
-        </div>
-
-        <div>
+          {/* curl 预览紧跟编辑器：改一个参数要立刻看到命令怎么变，
+              原来它在右栏，视线要跨过整个响应区才能对上 */}
           <CurlPreview
             curl={curl}
             warnings={wb.warnings}
             quoteStyle={settings.quoteStyle}
             onFixQuoteStyle={() => setSettings({ ...settings, quoteStyle: 'windows' })}
           />
+        </div>
+
+        <div className="shell-result">
           <ResponsePanel report={wb.report} sending={sender.sending} />
           <HistoryPanel
             items={sender.history}

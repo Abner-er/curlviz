@@ -64,18 +64,88 @@ header.top .tag {
   font-size: 0.8rem;
 }
 
+/*
+ * 三栏 shell：资料库 / 工作台 / 结果。
+ * 根字号 17px，所以 1rem ≈ 17px —— 下面这几档宽度是按"三栏各自放得下什么"倒推的，
+ * 不是随手挑的整数：左栏要能放下集合条目那一行按钮（约 408px），
+ * 中栏要放得下 URL 条与 curl 预览（约 510px），右栏要放得下响应体（约 442px）。
+ */
 main {
   display: grid;
-  grid-template-columns: minmax(30rem, 1.1fr) minmax(28rem, 1fr);
   gap: 1rem;
   padding: 1rem;
   align-items: start;
+  grid-template-columns: minmax(24rem, 26rem) minmax(30rem, 1fr) minmax(26rem, 1fr);
+  grid-template-areas: "lib work result";
 }
 
-@media (max-width: 1100px) {
+.shell-lib {
+  grid-area: lib;
+  /*
+   * 资料库 sticky 且自己滚动：库里的集合一多，跟着整页滚会把工作台与 curl 预览顶出屏幕，
+   * 而"看着命令改、从库里挑下一条"正是这个工具的主要动作。
+   * top 值要给粘性 header 让位（header 约 3.2rem 高）。
+   */
+  position: sticky;
+  top: 3.6rem;
+  max-height: calc(100vh - 4.4rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 0.15rem;
+}
+
+.shell-work {
+  grid-area: work;
+}
+
+.shell-result {
+  grid-area: result;
+}
+
+/* 中屏：资料库继续占住左边一整列，工作台与结果改成上下排 */
+@media (max-width: 1440px) {
   main {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(22rem, 24rem) minmax(0, 1fr);
+    grid-template-areas:
+      "lib work"
+      "lib result";
   }
+}
+
+/* 窄屏（含手机与分屏）：单列，顺序仍是"先选东西、再改命令、最后看结果" */
+@media (max-width: 1024px) {
+  main {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "lib"
+      "work"
+      "result";
+  }
+
+  /* 单列时 sticky 与自身滚动都没意义：让它跟着页面正常流下去 */
+  .shell-lib {
+    position: static;
+    max-height: none;
+    overflow-y: visible;
+  }
+}
+
+.lib-bar {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  padding: 0.3rem 0.1rem 0.5rem;
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 2;
+}
+
+.lib-bar strong {
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-dim);
 }
 
 section.card {

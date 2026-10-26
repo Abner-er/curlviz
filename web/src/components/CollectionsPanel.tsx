@@ -110,7 +110,7 @@ export function CollectionsPanel({
 
       {state.collections.length === 0 && (
         <p className="muted">
-          还没有存过请求。调通一条以后点「存入当前集合」就能反复用；换环境只改「变量」页，命令不用动。
+          还没有存过请求。调通一条以后点「存入当前集合」就能反复用；换环境只改下面「环境 · 变量」那一块，命令不用动。
         </p>
       )}
 
