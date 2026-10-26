@@ -25,17 +25,32 @@ npm install --cache 'G:\AI_LLM\.npm-cache'
 npm run typecheck                 # 各包 tsc --noEmit
 npm test                          # 各包 vitest run
 npm run test --workspace @curlviz/core   # 只跑契约
-npm run dev                       # web 开发服务器
-npm run build                     # 构建
+npm run dev                       # web 开发服务器 http://localhost:5183
+npm run build                     # 构建（含 tsc --noEmit）
+npm run preview --workspace @curlviz/web   # 预览已构建产物 http://localhost:4173
 npm run verify                    # typecheck + test
 ```
+
+## 怎么打开
+
+`dist/index.html` **双击打不开**：入口是 ES module，浏览器在 `file://` 下按 CORS 规则直接拒绝加载，
+看到的就是一张白屏（不是构建坏了）。本地起个 HTTP 服务再打开：
+
+```bash
+npm run dev                                    # 改代码用，http://localhost:5183
+npm run build && npm run preview --workspace @curlviz/web   # 看成品用，http://localhost:4173
+```
+
+`localhost` 是安全上下文，PWA 安装与 Service Worker 注册只在 http/https 下生效；
+纯离线自用的话，`web/dist/` 整个拷进内网静态服务器（nginx / IIS / `python -m http.server` 都行）即可，
+构建产物用的是相对路径。
 
 ## 当前进度
 
 | 阶段 | 状态 |
 |---|---|
 | M0 契约 + 内核 | ✅ 59 条 fixture、289 个测试全绿，严格 TS 无错 |
-| M1 Web MVP | ✅ 导入/表单/双向转换/发送/响应预览/本地持久化，59 个测试全绿，`vite build` 通过；剩下浏览器里的人工验收 |
+| M1 Web MVP | ✅ 导入/表单/双向转换/发送/响应预览/本地持久化，63 个测试全绿（含首屏冒烟），`vite build` 通过；剩下浏览器里的人工验收 |
 | M2 Web 增强（集合/环境/历史/导入导出/分享） | 未开始 |
 | M3 安卓 MVP | 未开始 |
 | M4 双端互通 + 本地 agent | 未开始 |
