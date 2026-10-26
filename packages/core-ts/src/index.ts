@@ -39,5 +39,8 @@ export {
   buildCollection,
   serializeCollection,
   redactSpec,
-  hasSensitive
+  hasSensitive,
+  REDACTED_MASK,
+  isRedactedValue,
+  hasRedactedValues
 } from './collection'

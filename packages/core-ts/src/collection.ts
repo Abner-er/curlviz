@@ -184,19 +184,31 @@ export function serializeCollection(collection: Collection, pretty = true): stri
 const SECRET_HEADER = /^(authorization|proxy-authorization|cookie|x-api-key|api-key|apikey|x-auth-token)$/i
 
 /**
- * 遮盖凭据：整串换成固定点位，一个原文字符都不留。
+ * 遮盖用的固定串：整串换成点位，一个原文字符都不留。
  * 以前保留过首尾各 3 位（看着好认是哪个 token），但 M2 起脱敏结果会**离开这台机器**
- * （导出文件、分享链接、二维码），首尾片段足够拿去撞库或补全，留着就是泄露。
+ * （导出文件、分享链接、二维码、历史列表），首尾片段足够拿去撞库或补全，留着就是泄露。
  * 识别"这是哪条凭据"由头名负责，不该由值负责。
  */
-function mask(): string {
-  return FULL_MASK
+export const REDACTED_MASK = '••••••••'
+
+/**
+ * 认得出"这个值是被人抹过的"。使用方在把脱敏副本回填成可编辑请求时必须用它判断一次：
+ * 用户把 `••••••••` 当成真密码发出去，是这个工具最难查的坑。
+ * 用 includes 而不只是全等，因为 rawArgs 里遮盖值是嵌在 `'-u bob:••••••••'` 这种原文里的。
+ */
+export function isRedactedValue(value: string): boolean {
+  return value === REDACTED_MASK || value.includes(REDACTED_MASK)
+}
+
+/** 整条 spec 里有没有遮盖痕迹（头/查询的值、basic 密码、bearer token、rawArgs 原文）。 */
+export function hasRedactedValues(spec: CurlSpec): boolean {
+  if (spec.headers.some((h) => isRedactedValue(h.value))) return true
+  if (spec.query.some((q) => isRedactedValue(q.value))) return true
+  if (isRedactedValue(spec.auth.basic.password) || isRedactedValue(spec.auth.bearer.token)) return true
+  return spec.rawArgs.some(isRedactedValue)
 }
 
 const SECRET_QUERY = /(token|secret|password|passwd|key|signature|sig|auth)/i
-
-/** 整串替换，不保留任何原文片段——保留尾部曾把 Bearer 长令牌漏出去过。 */
-const FULL_MASK = '••••••••'
 
 /** rawArgs 里"值即凭据"的 flag（归一化成长名后比对）。 */
 const SECRET_RAW_FLAGS = new Set(['user', 'proxy-user', 'cookie', 'oauth2-bearer'])
@@ -239,10 +251,10 @@ function redactRawArg(arg: string): string {
     const inner = stripQuotes(value)
     const name = headerNameOf(inner)
     if (!SECRET_HEADER.test(name)) return arg
-    return `${head} '${name}: ${FULL_MASK}'`
+    return `${head} '${name}: ${REDACTED_MASK}'`
   }
   if (SECRET_QUERY.test(long) || SECRET_RAW_FLAGS.has(long)) {
-    return `${head} ${FULL_MASK}`
+    return `${head} ${REDACTED_MASK}`
   }
   return arg
 }
@@ -255,22 +267,27 @@ function redactRawArg(arg: string): string {
 export function redactSpec(spec: CurlSpec): CurlSpec {
   const out: CurlSpec = JSON.parse(JSON.stringify(spec)) as CurlSpec
   out.headers = out.headers.map((h) =>
-    SECRET_HEADER.test(h.key) ? { ...h, value: mask() } : h
+    SECRET_HEADER.test(h.key) ? { ...h, value: REDACTED_MASK } : h
   )
   if (out.auth.type === 'basic') {
-    out.auth.basic = { username: out.auth.basic.username, password: mask() }
+    out.auth.basic = { username: out.auth.basic.username, password: REDACTED_MASK }
   }
   if (out.auth.type === 'bearer') {
-    out.auth.bearer = { token: mask() }
+    out.auth.bearer = { token: REDACTED_MASK }
   }
-  out.query = out.query.map((q) => (SECRET_QUERY.test(q.key) ? { ...q, value: mask() } : q))
+  out.query = out.query.map((q) => (SECRET_QUERY.test(q.key) ? { ...q, value: REDACTED_MASK } : q))
   out.rawArgs = out.rawArgs.map(redactRawArg)
   return out
 }
 
-/** 判断 spec 是否含敏感字段，供 UI 打"已脱敏"标记。 */
+/**
+ * 这条 spec 里有没有"脱敏会动它"的字段。
+ *
+ * 判据必须和 redactSpec 同源，不能各写一份：老版本这里只看 auth 与几个敏感头，而 redactSpec
+ * 还管 secret query 与 rawArgs。后果是 `?access_token=xxx` 这种命令被判"不敏感"，
+ * 于是**根本没遮盖就进了历史**——两份逻辑一旦分家，漏的那半边永远是会泄露的那半边。
+ * 注意它回答的是"要不要遮"，不是"里面有没有遮盖痕迹"；后者用 hasRedactedValues。
+ */
 export function hasSensitive(spec: CurlSpec): boolean {
-  if (spec.auth.type !== 'none') return true
-  if (spec.headers.some((h) => SECRET_HEADER.test(h.key))) return true
-  return false
+  return JSON.stringify(redactSpec(spec)) !== JSON.stringify(spec)
 }

@@ -12,6 +12,9 @@ import {
   parseCollection,
   redactSpec,
   serializeCollection,
+  REDACTED_MASK,
+  isRedactedValue,
+  hasRedactedValues,
   COLLECTION_FORMAT,
   type CurlSpec
 } from '../src/index'
@@ -183,5 +186,39 @@ describe('redactSpec 脱敏', () => {
     expect(hasSensitive(makeSpec({ auth: { type: 'bearer', basic: { username: '', password: '' }, bearer: { token: 'x' } } }))).toBe(true)
     expect(hasSensitive(makeSpec({ headers: [{ key: 'Cookie', value: 'a=b', enabled: true }] }))).toBe(true)
     expect(hasSensitive(makeSpec())).toBe(false)
+  })
+
+  it('hasSensitive 与 redactSpec 同源：只有 secret query 也算敏感（老写法会漏，明文进历史）', () => {
+    const q = makeSpec({
+      query: [{ key: 'access_token', value: 'leak-me', enabled: true }]
+    })
+    expect(hasSensitive(q)).toBe(true)
+    expect(redactSpec(q).query[0]?.value).toBe(REDACTED_MASK)
+  })
+
+  it('只有 rawArgs 里带凭据也算敏感（解析失败的命令同样会进历史）', () => {
+    const r = makeSpec({ rawArgs: ["-u 'bob:p1ss'"] })
+    expect(hasSensitive(r)).toBe(true)
+    expect(JSON.stringify(redactSpec(r))).not.toContain('p1ss')
+  })
+
+  it('已经遮盖过的副本：不再"需要脱敏"，但认得出带遮盖痕迹', () => {
+    const masked = redactSpec(
+      makeSpec({ auth: { type: 'basic', basic: { username: 'ops', password: 'pw' }, bearer: { token: '' } } })
+    )
+    expect(hasSensitive(masked)).toBe(false) // 没有可再遮的东西
+    expect(hasRedactedValues(masked)).toBe(true) // 但值是被抹过的，回填时必须提示
+  })
+
+  it('isRedactedValue 认得整串遮盖，也认得嵌在 rawArgs 原文里的遮盖', () => {
+    expect(isRedactedValue(REDACTED_MASK)).toBe(true)
+    expect(isRedactedValue("-u 'bob:" + REDACTED_MASK + "'")).toBe(true)
+    expect(isRedactedValue('plain-password')).toBe(false)
+    expect(isRedactedValue('')).toBe(false)
+  })
+
+  it('REDACTED_MASK 不含任何可能被猜出的片段信息', () => {
+    expect(REDACTED_MASK).toBe('••••••••')
+    expect(new Set(REDACTED_MASK).size).toBe(1)
   })
 })
