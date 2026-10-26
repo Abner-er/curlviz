@@ -35,4 +35,14 @@ describe('App 首屏', () => {
     expect(html).toContain('disabled')
     expect(html).toContain('填了 URL 才能发送')
   })
+
+  it('M2 的三个新面板都在首屏里：集合库、导入导出、环境选择器', () => {
+    const html = renderToString(<App />)
+    // 空库状态也不能是一片空白，要告诉用户这东西怎么用
+    expect(html).toContain('还没有存过请求')
+    expect(html).toContain('＋新建集合')
+    expect(html).toContain('导入 / 导出')
+    expect(html).toContain('拖到这里')
+    expect(html).toContain('不启用')
+  })
 })
