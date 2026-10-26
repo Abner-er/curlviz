@@ -1,0 +1,19 @@
+{
+  "name": "CurlViz — curl 可视化",
+  "short_name": "CurlViz",
+  "description": "面向运维的 curl 可视化工具：curl 与表单双向互转，免登录、不过云、数据全本地。",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "./favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

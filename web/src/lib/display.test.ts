@@ -1,0 +1,76 @@
+import { describe, expect, it } from 'vitest'
+import { createDefaultSpec, type CurlSpec } from '@curlviz/core'
+import { extOf, historySummary, suggestName, usedVars } from './display'
+import type { HistoryEntry } from '../types'
+
+function entry(result?: HistoryEntry['result']): HistoryEntry {
+  const spec: CurlSpec = createDefaultSpec('e')
+  return { id: '1', at: 1_700_000_000_000, spec, redacted: false, result }
+}
+
+describe('usedVars', () => {
+  it('url / header / query / body / auth / options 里写的变量都扫得到', () => {
+    const spec: CurlSpec = createDefaultSpec('v')
+    spec.url = 'https://{{gw}}/api'
+    spec.query = [{ key: 'token', value: '{{qtok}}', enabled: true }]
+    spec.headers = [{ key: 'X-Key', value: '{{hdr}}', enabled: true }]
+    spec.body = { ...spec.body, type: 'json', json: '{"t":"{{jt}}"}' }
+    spec.auth = { type: 'bearer', basic: { username: '{{u}}', password: '{{p}}' }, bearer: { token: '{{tok}}' } }
+    spec.options = { ...spec.options, userAgent: '{{ua}}', proxy: '{{px}}' }
+    expect(usedVars(spec)).toEqual(['gw', 'hdr', 'jt', 'p', 'px', 'qtok', 'tok', 'u', 'ua'])
+  })
+
+  it('逃生通道 rawArgs 里的变量也算：没说出口不等于不需要赋值', () => {
+    const spec: CurlSpec = createDefaultSpec('r')
+    spec.rawArgs = ['--resolve', '{{host}}:443:10.0.0.1']
+    expect(usedVars(spec)).toEqual(['host'])
+  })
+
+  it('重名去重、结果稳定排序（面板不会每敲一下换顺序）', () => {
+    const spec: CurlSpec = createDefaultSpec('d')
+    spec.url = '{{a}}/{{b}}'
+    spec.headers = [{ key: 'X', value: '{{a}}', enabled: true }]
+    expect(usedVars(spec)).toEqual(['a', 'b'])
+    expect(usedVars(spec)).toEqual(usedVars(spec))
+  })
+
+  it('没用变量就是空数组', () => {
+    expect(usedVars(createDefaultSpec('n'))).toEqual([])
+  })
+})
+
+describe('extOf / suggestName', () => {
+  it('按 Content-Type 给后缀，认不出来用 .bin', () => {
+    expect(extOf('application/json; charset=utf-8')).toBe('.json')
+    expect(extOf('text/html')).toBe('.html')
+    expect(extOf('application/xml')).toBe('.xml')
+    expect(extOf('text/plain')).toBe('.txt')
+    expect(extOf('image/png')).toBe('.png')
+    expect(extOf('image/jpeg')).toBe('.jpg')
+    expect(extOf('image/webp')).toBe('.img')
+    expect(extOf('application/pdf')).toBe('.pdf')
+    expect(extOf('application/octet-stream')).toBe('.bin')
+    expect(extOf('')).toBe('.bin')
+  })
+
+  it('下载名带发送时间戳且不含冒号点号（Windows 文件名不允许）', () => {
+    const name = suggestName(new Date('2026-10-26T09:36:14.500Z').getTime(), 'application/json')
+    expect(name).toBe('curlviz-2026-10-26T09-36-14.json')
+    expect(name).not.toMatch(/[:.](?!json)/)
+  })
+})
+
+describe('historySummary', () => {
+  it('没发过就说没发过', () => {
+    expect(historySummary(entry())).toBe('未发送')
+  })
+
+  it('成功：状态码 + 耗时，一秒以内用 ms', () => {
+    expect(historySummary(entry({ status: 200, ok: true, ms: 42 }))).toBe('200 · 42ms')
+    expect(historySummary(entry({ status: 502, ok: false, ms: 1234 }))).toBe('502 · 1.23s')
+  })
+
+  it('失败：直接显示失败原因（历史列表不展开响应体，避免泄密）', () => {
+    expect(historySummary(entry({ error: '请求没能完成' }))).toBe('请求没能完成')
+  })
+})

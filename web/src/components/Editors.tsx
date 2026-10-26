@@ -1,0 +1,311 @@
+import type { AuthConfig, BodyType, CurlSpec, MultipartParam, RequestOptions } from '@curlviz/core'
+import { KeyValueTable } from './KeyValueTable'
+
+interface BodyProps {
+  spec: CurlSpec
+  onChange: (patch: Partial<CurlSpec>) => void
+}
+
+const BODY_TYPES: { value: BodyType; label: string }[] = [
+  { value: 'none', label: '无' },
+  { value: 'json', label: 'JSON' },
+  { value: 'form', label: '表单 (x-www-form-urlencoded)' },
+  { value: 'multipart', label: 'multipart (上传)' },
+  { value: 'raw', label: '纯文本 / 原始' }
+]
+
+export function BodyEditor({ spec, onChange }: BodyProps) {
+  const body = spec.body
+  const patch = (p: Partial<typeof body>): void => onChange({ body: { ...body, ...p } })
+
+  return (
+    <div>
+      <div className="row">
+        <div style={{ minWidth: '16rem' }}>
+          <label>类型</label>
+          <select value={body.type} onChange={(e) => patch({ type: e.target.value as BodyType })}>
+            {BODY_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <span className="muted">切类型不会清空其它类型的内容，来回切回来还在。</span>
+      </div>
+
+      {body.type === 'json' && (
+        <div style={{ marginTop: '0.6rem' }}>
+          <label>JSON 正文（生成时补 Content-Type: application/json，除非你自己写了）</label>
+          <textarea
+            rows={10}
+            value={body.json}
+            spellCheck={false}
+            onChange={(e) => patch({ json: e.target.value })}
+            placeholder='{"key":"value"}'
+          />
+        </div>
+      )}
+
+      {body.type === 'raw' && (
+        <div style={{ marginTop: '0.6rem' }}>
+          <label>原文（走 --data-binary，一个字节都不改）</label>
+          <textarea rows={10} value={body.raw} spellCheck={false} onChange={(e) => patch({ raw: e.target.value })} />
+        </div>
+      )}
+
+      {body.type === 'form' && (
+        <div style={{ marginTop: '0.6rem' }}>
+          <KeyValueTable
+            rows={body.form}
+            onChange={(rows) => patch({ form: rows })}
+            keyPlaceholder="字段名"
+            valuePlaceholder="值"
+            pairLabel="字段 / 值"
+          />
+          <p className="muted">值里的空格、中文、+ 会被重新编码；想要字节级原样请选「纯文本 / 原始」。</p>
+        </div>
+      )}
+
+      {body.type === 'multipart' && (
+        <div style={{ marginTop: '0.6rem' }}>
+          <MultipartTable rows={body.multipart} onChange={(rows) => patch({ multipart: rows })} />
+          <p className="muted">
+            文件字段填的是路径：浏览器读不到本地文件，这一类请求请用「复制到终端」。
+          </p>
+        </div>
+      )}
+
+      {body.type === 'none' && <p className="muted">这条请求不带 body。</p>}
+    </div>
+  )
+}
+
+function MultipartTable({
+  rows,
+  onChange
+}: {
+  rows: MultipartParam[]
+  onChange: (rows: MultipartParam[]) => void
+}) {
+  const set = (i: number, patch: Partial<MultipartParam>): void =>
+    onChange(rows.map((r, k) => (k === i ? { ...r, ...patch } : r)))
+
+  return (
+    <div>
+      <table className="kv">
+        <thead>
+          <tr>
+            <th style={{ width: '2.2rem' }}>发</th>
+            <th>字段</th>
+            <th style={{ width: '7rem' }}>类型</th>
+            <th>值 / 文件路径</th>
+            <th>filename</th>
+            <th>type</th>
+            <th style={{ width: '3rem' }} />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i}>
+              <td>
+                <input
+                  type="checkbox"
+                  checked={r.enabled}
+                  onChange={(e) => set(i, { enabled: e.target.checked })}
+                  aria-label={`发送第 ${i + 1} 项`}
+                />
+              </td>
+              <td>
+                <input value={r.key} onChange={(e) => set(i, { key: e.target.value })} placeholder="filed" />
+              </td>
+              <td>
+                <select
+                  value={r.kind}
+                  onChange={(e) => set(i, { kind: e.target.value as 'text' | 'file' })}
+                  aria-label="类型"
+                >
+                  <option value="text">文本</option>
+                  <option value="file">文件</option>
+                </select>
+              </td>
+              <td>
+                <input
+                  value={r.value}
+                  onChange={(e) => set(i, { value: e.target.value })}
+                  placeholder={r.kind === 'file' ? '/data/report.pdf' : '张三'}
+                />
+              </td>
+              <td>
+                <input
+                  value={r.filename ?? ''}
+                  onChange={(e) => set(i, { filename: e.target.value })}
+                  placeholder="可选"
+                  disabled={r.kind !== 'file'}
+                />
+              </td>
+              <td>
+                <input
+                  value={r.contentType ?? ''}
+                  onChange={(e) => set(i, { contentType: e.target.value })}
+                  placeholder="application/pdf"
+                />
+              </td>
+              <td>
+                <button className="mini" onClick={() => onChange(rows.filter((_, k) => k !== i))} title="删除">
+                  ✕
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <button
+        className="mini"
+        style={{ marginTop: '0.4rem' }}
+        onClick={() => onChange([...rows, { key: '', kind: 'text', value: '', enabled: true }])}
+      >
+        ＋ 添加一项
+      </button>
+    </div>
+  )
+}
+
+export function AuthEditor({ auth, onChange }: { auth: AuthConfig; onChange: (a: AuthConfig) => void }) {
+  return (
+    <div>
+      <label>方式</label>
+      <select value={auth.type} onChange={(e) => onChange({ ...auth, type: e.target.value as AuthConfig['type'] })}>
+        <option value="none">无</option>
+        <option value="basic">Basic（用户名 + 密码 → -u）</option>
+        <option value="bearer">Bearer（token → Authorization 头）</option>
+      </select>
+
+      {auth.type === 'basic' && (
+        <div className="row" style={{ marginTop: '0.6rem' }}>
+          <div className="grow">
+            <label>用户名</label>
+            <input
+              value={auth.basic.username}
+              onChange={(e) => onChange({ ...auth, basic: { ...auth.basic, username: e.target.value } })}
+            />
+          </div>
+          <div className="grow">
+            <label>密码</label>
+            <input
+              type="password"
+              value={auth.basic.password}
+              onChange={(e) => onChange({ ...auth, basic: { ...auth.basic, password: e.target.value } })}
+            />
+          </div>
+        </div>
+      )}
+
+      {auth.type === 'bearer' && (
+        <div style={{ marginTop: '0.6rem' }}>
+          <label>Token</label>
+          <input
+            value={auth.bearer.token}
+            onChange={(e) => onChange({ ...auth, bearer: { ...auth.bearer, token: e.target.value } })}
+            placeholder="{{token}}"
+          />
+        </div>
+      )}
+
+      {auth.type !== 'none' && (
+        <p className="muted">
+          这里填的认证会接管 Authorization 头：Headers 表里同名的那条在生成时不会再输出，避免 curl 真的发两个。
+        </p>
+      )}
+    </div>
+  )
+}
+
+export function OptionsEditor({
+  options,
+  rawArgs,
+  onChange,
+  onDropRawArg
+}: {
+  options: RequestOptions
+  rawArgs: string[]
+  onChange: (o: RequestOptions) => void
+  onDropRawArg: (index: number) => void
+}) {
+  const set = (patch: Partial<RequestOptions>): void => onChange({ ...options, ...patch })
+  const num = (v: string): number => {
+    const n = Number(v)
+    return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0
+  }
+
+  return (
+    <div>
+      <div className="row">
+        <label style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+          <input
+            type="checkbox"
+            checked={options.followRedirects}
+            onChange={(e) => set({ followRedirects: e.target.checked })}
+          />
+          -L 跟随重定向
+        </label>
+        <label style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+          <input type="checkbox" checked={options.insecure} onChange={(e) => set({ insecure: e.target.checked })} />
+          -k 跳过证书校验
+        </label>
+        <label style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+          <input
+            type="checkbox"
+            checked={options.compressed}
+            onChange={(e) => set({ compressed: e.target.checked })}
+          />
+          --compressed
+        </label>
+      </div>
+
+      <div className="row" style={{ marginTop: '0.6rem' }}>
+        <div style={{ width: '11rem' }}>
+          <label>总时限 -m（毫秒，0=不限）</label>
+          <input type="number" min={0} step={100} value={options.timeoutMs} onChange={(e) => set({ timeoutMs: num(e.target.value) })} />
+        </div>
+        <div style={{ width: '12rem' }}>
+          <label>建连时限 --connect-timeout（毫秒）</label>
+          <input
+            type="number"
+            min={0}
+            step={100}
+            value={options.connectTimeoutMs}
+            onChange={(e) => set({ connectTimeoutMs: num(e.target.value) })}
+          />
+        </div>
+      </div>
+
+      <div className="row" style={{ marginTop: '0.6rem' }}>
+        <div className="grow">
+          <label>-A 自定义 UA</label>
+          <input value={options.userAgent} onChange={(e) => set({ userAgent: e.target.value })} />
+        </div>
+        <div className="grow">
+          <label>-x 代理</label>
+          <input value={options.proxy} onChange={(e) => set({ proxy: e.target.value })} placeholder="http://127.0.0.1:8888" />
+        </div>
+      </div>
+
+      {rawArgs.length > 0 && (
+        <div style={{ marginTop: '0.7rem' }}>
+          <label>原样保留的片段（本工具还没法变成字段的 flag，复制时会照原样带上）</label>
+          <ul className="notes">
+            {rawArgs.map((raw, i) => (
+              <li key={i} className="mono" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <span className="grow">{raw}</span>
+                <button className="mini" onClick={() => onDropRawArg(i)} title="不要这一段了">
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
