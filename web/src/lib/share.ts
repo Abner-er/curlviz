@@ -49,6 +49,34 @@ export class ShareError extends Error {
   }
 }
 
+/**
+ * 分享码解不开时说给人看的那句话。
+ *
+ * hint 必须一起说：只报"这不是 CurlViz 的分享码"，用户会怀疑链接被 IM 截断了，
+ * 而实际更常见的故障是复制时漏了末尾一两个字符 —— hint 才是他能动手解决的部分。
+ * 抽成函数是为了能单测，也让"开机自动导入"和"手动解码"两处说得是同一句话。
+ */
+export function shareErrorText(e: unknown): string {
+  return e instanceof ShareError ? `${e.message}（${e.hint}）` : `分享链接解不开：${String(e)}`
+}
+
+/**
+ * 把地址栏里的 `#share=...` 抹掉。
+ *
+ * 必须抹：分享码留在 URL 里，用户每刷新一次就重复导入一次，集合库里会攒出一堆
+ * 一模一样的集合 —— 而"导入一律新建、绝不覆盖"这条规矩本身是对的，问题只出在
+ * 同一个链接被当成两次导入。另外解码是异步的，成功与失败两条路都要抹（失败了
+ * 留着地址也只是让人反复撞同一个坏码）。
+ *
+ * 没有 location / 没有 replaceState 的环境（测试、老 WebView）静默跳过，不假装成功。
+ */
+export function clearShareHash(): void {
+  const loc = globalThis.location
+  if (globalThis.history?.replaceState && loc) {
+    globalThis.history.replaceState(null, '', loc.pathname + loc.search)
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* base64url（二进制安全，不依赖 btoa 的 latin1 之外的能力）            */
 /* ------------------------------------------------------------------ */

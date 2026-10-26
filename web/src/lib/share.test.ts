@@ -1,15 +1,17 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { buildCollection, createDefaultSpec, redactSpec, type CurlSpec } from '@curlviz/core'
 import {
   base64UrlToBytes,
   bytesToBase64Url,
   buildShareUrl,
+  clearShareHash,
   QR_COMFORT_BYTES,
   QR_MAX_BYTES,
   createPayload,
   decodeShare,
   encodeShare,
   ShareError,
+  shareErrorText,
   shareSizeHint,
   SHARE_PREFIX
 } from './share'
@@ -149,5 +151,41 @@ describe('shareSizeHint', () => {
     expect(shareSizeHint(dense).message).toContain('扫不动')
     const tooBig = SHARE_PREFIX + 'x'.repeat(QR_MAX_BYTES + 10)
     expect(shareSizeHint(tooBig).message).toContain('超过二维码')
+  })
+})
+
+describe('shareErrorText', () => {
+  it('ShareError 把 hint 一起说出来：漏字符才是最常见的坏法', () => {
+    const e = new ShareError('这不是 CurlViz 的分享码', '确认整串都复制全了，末尾少一个字符就解不开')
+    expect(shareErrorText(e)).toBe('这不是 CurlViz 的分享码（确认整串都复制全了，末尾少一个字符就解不开）')
+  })
+
+  it('其它异常（浏览器没有 CompressionStream 之类）原样带出，不冒充成格式问题', () => {
+    expect(shareErrorText(new Error('CompressionStream is not defined'))).toBe(
+      '分享链接解不开：Error: CompressionStream is not defined'
+    )
+    expect(shareErrorText('字符串抛的错')).toContain('分享链接解不开：')
+  })
+})
+
+describe('clearShareHash', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('抹掉 hash：新地址只剩 pathname + search（不抹就刷新一次重复导入一次）', () => {
+    const calls: string[] = []
+    vi.stubGlobal('location', { pathname: '/app', search: '?v=2', hash: '#share=curlviz:1:abc' })
+    vi.stubGlobal('history', {
+      replaceState: (_d: unknown, _t: string, url: string) => {
+        calls.push(url)
+      }
+    })
+    clearShareHash()
+    expect(calls).toEqual(['/app?v=2'])
+  })
+
+  it('没有 location / 没有 replaceState 的环境静默跳过，不抛（测试与非浏览器宿主都会走到）', () => {
+    expect(() => clearShareHash()).not.toThrow()
   })
 })

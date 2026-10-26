@@ -3,6 +3,7 @@ import { createDefaultSpec, hasSensitive, type CurlSpec } from '@curlviz/core'
 import {
   addCollection,
   blankRequest,
+  boundEntryOf,
   coerceCollection,
   duplicateRequest,
   EMPTY_COLLECTION_STATE,
@@ -349,5 +350,39 @@ describe('searchLibrary', () => {
     const hits = searchLibrary(lib, 'https')
     expect(hits.map((h) => h.collection.name)).toEqual(['生产巡检', '测试环境'])
     expect(hits[0]!.requests.map((r) => r.spec.name)).toEqual(['查订单', '重启服务'])
+  })
+})
+
+describe('boundEntryOf', () => {
+  const state: CollectionState = {
+    collections: [
+      {
+        id: 'c1',
+        name: '生产巡检',
+        requests: [
+          { id: 'r1', updatedAt: 1, spec: { ...createDefaultSpec('查订单'), url: 'https://a' } },
+          { id: 'r2', updatedAt: 2, spec: createDefaultSpec() }
+        ]
+      }
+    ]
+  }
+
+  it('绑定有效时给出集合名与请求名（界面上"编辑自…"那句的数据来源）', () => {
+    expect(boundEntryOf(state, { collectionId: 'c1', requestId: 'r1' })).toEqual({
+      collection: '生产巡检',
+      request: '查订单'
+    })
+  })
+
+  it('请求没名字就顶上"未命名请求"，不让界面出现空书名', () => {
+    expect(boundEntryOf(state, { collectionId: 'c1', requestId: 'r2' })?.request).toBe('未命名请求')
+  })
+
+  it('openRef 悬空（集合或请求被删过 / 只有一半）一律给 null，显示成没绑定', () => {
+    expect(boundEntryOf(state, NO_OPEN_REF)).toBeNull()
+    expect(boundEntryOf(state, { collectionId: 'c1', requestId: '被删了' })).toBeNull()
+    expect(boundEntryOf(state, { collectionId: '不存在的集合', requestId: 'r1' })).toBeNull()
+    expect(boundEntryOf(state, { collectionId: 'c1', requestId: null })).toBeNull()
+    expect(boundEntryOf(state, { collectionId: null, requestId: 'r1' })).toBeNull()
   })
 })

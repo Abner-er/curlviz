@@ -197,6 +197,27 @@ export function requestCount(state: CollectionState): number {
   return state.collections.reduce((sum, c) => sum + c.requests.length, 0)
 }
 
+export interface BoundEntry {
+  collection: string
+  request: string
+}
+
+/**
+ * 编辑器当前绑定的集合条目 —— 界面上"编辑自「集合」的请求"那句的来源。
+ *
+ * 搬进数据层是因为这条判断有失败分支：openRef 是落在 localStorage 里的，
+ * 用户可能在另一台机器 / 上一次会话删掉了那个集合，刷新后引用就悬空了。
+ * 悬空时必须返回 null（显示成"没绑定"，保存走"另存为新条目"），
+ * 而不是让组件对着 undefined 取值崩掉。
+ */
+export function boundEntryOf(state: CollectionState, ref: OpenRef): BoundEntry | null {
+  if (ref.collectionId === null || ref.requestId === null) return null
+  const col = state.collections.find((c) => c.id === ref.collectionId)
+  const req = col?.requests.find((r) => r.id === ref.requestId)
+  if (!col || !req) return null
+  return { collection: col.name, request: req.spec.name || '未命名请求' }
+}
+
 /* ------------------------------------------------------------------ */
 /* 搜索（左栏资料库）                                                   */
 /* ------------------------------------------------------------------ */

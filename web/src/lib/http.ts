@@ -373,3 +373,31 @@ export async function sendSpec(
 function isImageish(ct: string): boolean {
   return ct.toLowerCase().startsWith('image/')
 }
+
+/**
+ * sendSpec 按设计不抛错，失败都编进 SendOutcome。真抛了就是环境级故障
+ * （`globalThis.fetch` 取不到、构造 Request 时浏览器直接拒绝这类），
+ * 界面不能因此什么都不显示、把上一次的结果继续挂在那儿。
+ *
+ * 不复用 blocked-or-network：那一类说的是"这条请求没出去，去查 CORS / 服务通不通"，
+ * 而这里查接口没有任何意义 —— 该做的是刷新页面。归错类会把人引到错误的排查方向上，
+ * 对这个工具来说比不报错更糟。
+ */
+export function toolFailureReport(e: unknown, curl: string, sentAt: number): SendReport {
+  return {
+    outcome: {
+      ok: false,
+      failure: {
+        kind: 'tool-error',
+        message: `工具自己出错了：${String(e)}`,
+        hint: '这不是接口的问题，是页面本身不对劲。刷新一次再试；还是这样就用「复制到终端」在本机跑 curl。',
+        raw: e instanceof Error ? (e.stack ?? e.message) : String(e)
+      }
+    },
+    unresolved: [],
+    blockedHeaders: [],
+    notes: [],
+    curl,
+    sentAt
+  }
+}

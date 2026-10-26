@@ -38,6 +38,12 @@ export type FailureKind =
   | 'mixed-content'
   /** 浏览器做不到、必须走本地 agent 或终端的形态（如 multipart 里的文件字段）。 */
   | 'unsupported-in-browser'
+  /**
+   * 工具自己出错了（sendSpec 按设计不抛，真抛了就是连 fetch 都拿不到这类环境级故障）。
+   * 单独立一类是为了不冒充网络问题：blocked-or-network 说的是"这条请求没出去"，
+   * 而这里是"这个页面本身不对劲"，用户下一步该刷新页面而不是去查 CORS 头。
+   */
+  | 'tool-error'
 
 export interface SendFailure {
   kind: FailureKind

@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   browserKeyValue,
+  createBrowserStore,
   createStore,
   debounce,
   HISTORY_LIMIT,
   KEYS,
   memoryKeyValue,
+  STORAGE_UNAVAILABLE_NOTE,
+  storageFailureMessage,
   type KeyValue
 } from './storage'
 
@@ -173,5 +176,44 @@ describe('debounce', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('storageFailureMessage', () => {
+  it('quota 说成"空间不足"，其它说成"不可用"（两种故障用户能做的事不一样）', () => {
+    expect(storageFailureMessage('集合', 'quota', '这部分改动关掉页面就没了。')).toBe(
+      '集合写入本地存储失败（空间不足），这部分改动关掉页面就没了。'
+    )
+    expect(storageFailureMessage('集合', 'unavailable', '这部分改动关掉页面就没了。')).toBe(
+      '集合写入本地存储失败（不可用），这部分改动关掉页面就没了。'
+    )
+  })
+
+  it('后果由调用方给：草稿丢了和集合丢了不能共用一句粉饰话', () => {
+    expect(storageFailureMessage('草稿', 'quota', '草稿可能留不住。')).toContain('草稿可能留不住。')
+    expect(storageFailureMessage('历史', 'quota', '只保留在这次会话里。')).toContain('只保留在这次会话里。')
+  })
+})
+
+describe('createBrowserStore', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('探测不到 localStorage 时 available=false，但仍能用（内存后端把功能兜住，不崩）', () => {
+    const { store, available } = createBrowserStore()
+    expect(available).toBe(false)
+    expect(store.save(KEYS.draft, { url: 'https://x' }).ok).toBe(true)
+    expect(store.load(KEYS.draft, null)).toEqual({ url: 'https://x' })
+    expect(STORAGE_UNAVAILABLE_NOTE).toContain('只在这次会话里有效')
+  })
+
+  it('后端可用时 available=true，且写的确实是那个后端（探测结果与实际后端不能来自两次判定）', () => {
+    const backend = fakeBackend()
+    vi.stubGlobal('localStorage', backend)
+    const { store, available } = createBrowserStore()
+    expect(available).toBe(true)
+    store.save(KEYS.collections, { collections: [] })
+    expect([...backend.written.keys()]).toEqual(['curlviz.collections'])
   })
 })

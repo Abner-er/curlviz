@@ -128,3 +128,33 @@ export function debounce<A extends unknown[]>(fn: (...args: A) => void, waitMs: 
     }, waitMs)
   }
 }
+
+/** 后端在（浏览器隐私模式 / file:// / 被策略禁用）探测不到时的提示：功能不塌，但要说清留不住。 */
+export const STORAGE_UNAVAILABLE_NOTE = '本地存储不可用，草稿与历史只在这次会话里有效。'
+
+/**
+ * 写入失败的人话说明。
+ *
+ * 抽成函数是因为"quota → 空间不足、其它 → 不可用"这条映射原来在 App 里抄了三遍
+ * （草稿 / 资料库 / 历史），措辞一旦分家，用户就会看到三种说法猜到底是哪种故障。
+ * `consequence` 由调用方给：草稿丢了和集合丢了严重程度不一样，不该由存储层统一粉饰。
+ */
+export function storageFailureMessage(label: string, reason: 'quota' | 'unavailable', consequence: string): string {
+  return `${label}写入本地存储失败（${reason === 'quota' ? '空间不足' : '不可用'}），${consequence}`
+}
+
+export interface StoreBundle {
+  store: Store
+  /** false = 没拿到真的 localStorage，用的是内存后端（数据留不住，界面必须说）。 */
+  available: boolean
+}
+
+/**
+ * 建一次、探测一次。
+ * 原来 App 里 `createStore(browserKeyValue() ?? memoryKeyValue())` 加 `browserKeyValue() !== null`
+ * 会写两次探测键；不算错，但"探测结果"和"实际用的后端"可能来自两次不同判定，读代码时得费劲确认它们一致。
+ */
+export function createBrowserStore(namespace = 'curlviz.'): StoreBundle {
+  const backend = browserKeyValue()
+  return { store: createStore(backend ?? memoryKeyValue(), namespace), available: backend !== null }
+}
