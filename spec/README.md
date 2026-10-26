@@ -235,9 +235,84 @@ curl 仍然**等一个永远不会来的响应体**，命令看起来卡死—�
 `-u` / `--proxy-user` / `--oauth2-bearer` / 敏感头**。
 `rawArgs` 这一条容易漏：解析失败的命令同样会进历史，`-u bob:pw` 原样躺在那儿。
 
+**遮盖的形状**：整串替换为 `••••••••`，**不保留原文任何片段**。
+早期写法是「首 3 位 + 点 + 尾 3 位」，那时脱敏结果只在本地历史列表里看一眼，留头尾方便认出是哪条；
+M2 起脱敏结果会通过分享码 / 导出文件**离开本机**，而它把首尾各 3 个字符和精确长度一起交了出去 ——
+够对方把这条凭据对上号（同一个 token 在别处也出现过时尤其有用）。
+Kotlin 侧照此实现，别再回到留首尾的写法。
+
 ---
 
-## 9. 与 PLAN.md 的偏离登记
+## 9. 分享载荷（curlviz:1:）
+
+M2 起「一个请求」或「整个集合」可以编成一段文本，走链接或二维码传给同事。
+安卓端（M3）**必须能解开网页端生成的码**，所以格式在这里钉死。TS 侧实现：`web/src/lib/share.ts`。
+
+### 9.1 字符串结构
+
+```
+curlviz:1:<mark><base64url(payload bytes)>
+```
+
+- 前缀 `curlviz:1:` —— `1` 是格式版本。读不出前缀直接报错，不猜。
+- `<mark>` 单个字符：`g` = gzip，`p` = 明文 JSON。除 `g`/`p` 以外的一律报「不认识的压缩标记」。
+- 载荷字节 = `JSON.stringify(SharePayload)` 的 UTF-8。`p` 时直接 base64url；
+  `g` 时先 gzip 再 base64url。**若 gzip 结果不比明文短，编码器必须退回 `p`**（极小载荷会这样）。
+- base64url：`+`→`-`、`/`→`_`、去掉尾部 `=`。解码时补回 padding。
+  这一段是二进制安全的，`atob/btoa` 只保证 latin1，所以必须先按字节拼串再编码
+  （`bytesToBase64Url` 的写法），Kotlin 侧用等价的 `Base64.URL_SAFE | NO_WRAP | NO_PADDING`。
+
+### 9.2 payload JSON 形状
+
+```json
+{ "kind": "request", "spec": { "...": "CurlSpec v1" }, "redacted": true, "at": 1730000000000 }
+{ "kind": "collection", "collection": { "format": "curlviz-collection", "version": 1, "environments": [], "requests": [] }, "redacted": false, "at": 1730000000000 }
+```
+
+- `kind` 只认 `request` / `collection`，缺 `kind` 或认不出的一律拒绝。
+- `spec` / `collection.requests` 解出来**必须先过 `normalizeSpec`**（同 §8 的入口规则），
+  因为这份 JSON 可能来自更新的版本或被人手改过。
+- `redacted` 表示载荷里的凭据已被抹掉。它只是**给人看的事实标记**，解码方不能靠它做安全判断——
+  伪造 `redacted: true` 就能骗过提示。界面上同时要显示「没勾脱敏 ⇒ 凭据原样在码里」。
+- **脱敏管不到 `environments`**。`redactSpec` 只处理请求头 / auth / query / rawArgs 里的凭据。
+  环境值不是"没判据所以不遮"，而是**遮了这份载荷就没用了** —— 带环境出去的目的就是让对方拿到
+  真实的网关地址与 token。所以安全的默认是「不带环境」：生成方必须让它默认不勾，
+  勾上时（哪怕仍脱敏）明确提示"环境里的值原样出去"。安卓侧照此办理，
+  别让人以为勾了脱敏扫出去的码就没有 token。
+- `at` 是生成时间戳（毫秒），仅用于展示与排查；缺失时解码方填当前时间，不参与任何校验。
+
+### 9.3 传输方式与容量
+
+- 落地形态是 URL 的 **hash 片段**：`https://…/#share=<编码结果>`。
+  走 hash 的原因：hash 不进服务端访问日志、不进 `Referer`，也不会被爬虫带走。
+  解码方要能接受三种输入：完整 URL、`share=...`、纯编码串。
+- 压缩只用**宿主原生 gzip**（浏览器 `CompressionStream('gzip')`；安卓用 `GZIPOutputStream`），
+  不接任何第三方 codec / 短链 / 二维码 API —— 那等于把内网接口地址交给外部。
+- 二维码容量：`1024` 字节以内算好扫，`2600` 字节是硬上限（QR v40 byte 模式理论 ~2953 字节，
+  但机房门口对着手机扫那么密的码扫不出来）。超上限就只给链接或导出文件，别硬生码。
+
+### 9.4 参考样本（给 M3 对拍）
+
+明文标记（`p`）的样本：载荷 JSON 617 字节，编码后整串 834 字符；同一份内容改走 gzip 是 554 字符。
+
+```
+curlviz:1:peyJraW5kIjoicmVxdWVzdCIsInJlZGFjdGVkIjp0cnVlLCJhdCI6MTczMDAwMDAwMDAwMCwic3BlYyI6eyJ2ZXJzaW9uIjoxLCJuYW1lIjoi56S65L6L77ya5Y-W5Zue5LiA5Liq55So5oi3IiwibWV0aG9kIjoiR0VUIiwidXJsIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS5jb20vdXNlcnMvNDIiLCJxdWVyeSI6W3sia2V5IjoidmVyYm9zZSIsInZhbHVlIjoiMSIsImVuYWJsZWQiOnRydWV9XSwiaGVhZGVycyI6W3sia2V5IjoiQWNjZXB0IiwidmFsdWUiOiJhcHBsaWNhdGlvbi9qc29uIiwiZW5hYmxlZCI6dHJ1ZX1dLCJib2R5Ijp7InR5cGUiOiJub25lIiwianNvbiI6IiIsImZvcm0iOltdLCJtdWx0aXBhcnQiOltdLCJyYXciOiIifSwiYXV0aCI6eyJ0eXBlIjoiYmVhcmVyIiwiYmFzaWMiOnsidXNlcm5hbWUiOiIiLCJwYXNzd29yZCI6IiJ9LCJiZWFyZXIiOnsidG9rZW4iOiLigKLigKLigKLigKLigKLigKLigKLigKIifX0sIm9wdGlvbnMiOnsiZm9sbG93UmVkaXJlY3RzIjp0cnVlLCJpbnNlY3VyZSI6ZmFsc2UsImNvbXByZXNzZWQiOnRydWUsInRpbWVvdXRNcyI6MTAwMDAsImNvbm5lY3RUaW1lb3V0TXMiOjAsInVzZXJBZ2VudCI6IiIsInByb3h5IjoiIn0sInJhd0FyZ3MiOltdfX0
+```
+
+解开后的载荷 JSON（就是 §9.2 的形状，`at` 固定在 1730000000000 才能当样本）：
+
+```json
+{"kind":"request","redacted":true,"at":1730000000000,"spec":{"version":1,"name":"示例：取回一个用户","method":"GET","url":"https://api.example.com/users/42","query":[{"key":"verbose","value":"1","enabled":true}],"headers":[{"key":"Accept","value":"application/json","enabled":true}],"body":{"type":"none","json":"","form":[],"multipart":[],"raw":""},"auth":{"type":"bearer","basic":{"username":"","password":""},"bearer":{"token":"••••••••"}},"options":{"followRedirects":true,"insecure":false,"compressed":true,"timeoutMs":10000,"connectTimeoutMs":0,"userAgent":"","proxy":""},"rawArgs":[]}}
+```
+
+**验收只看解码方向**：各端要求是"给定上面那串，解出的字段与这段 JSON 一致"。
+不许拿"生成的字节必须等于这串"当条件——`JSON.stringify` 的键序跟着对象构造顺序走，
+`redactSpec` 与 gzip 的输出头（mtime / OS 字节）也不是跨端可复现的，钉死了只会让两端互相迁就假象。
+TS 侧把这条钉在 `web/src/lib/share.test.ts` 的「跨端参考样本」里，改格式必须同时改文档与这三条断言。
+
+---
+
+## 10. 与 PLAN.md 的偏离登记
 
 PLAN 的 v1 契约表有两处不足，代码已按下列方式实现，**等用户确认后回填 PLAN**：
 
@@ -250,3 +325,24 @@ PLAN 的 v1 契约表有两处不足，代码已按下列方式实现，**等用
 
 M0 实现期间另外发现并已在本文档写明的问题：form 自校验（§6）、`--form-string` 选择（§4.3）、
 `rawArgs` 脱敏（§8）、multipart `filename=` 的往返（fixture `post-multipart-filename-and-type`）。
+M2 期间新增：脱敏遮盖不留首尾（§8）、分享载荷格式（§9）。
+
+范围分工，免得翻错地方：本节只登记 **M0 那两处契约表不足**；分享码的格式在本文 §9；
+M2 必须先定的四条规矩（分享格式、脱敏遮盖形状、多环境迁移的冲突策略、导入永不覆盖）
+与两条"故意不做"（一键清空、`window.confirm`）写在 `docs/PLAN.md` §9。
+
+---
+
+## 11. 不进跨端契约的本地格式
+
+下面这些是**某一端自己的存储**，另一端不需要实现，也不要拿它们当对拍标准：
+
+- **`curlviz-backup` v1**（`web/src/lib/backup.ts`）：网页端「一次导出全部家当」的文件，
+  形状是 `{ format: "curlviz-backup", version: 1, collections: [...], environments: [...], activeName }`。
+  它内嵌的每条请求仍然是 `curlviz-collection` 里的 `CurlSpec v1`，所以**契约部分照旧对拍**，
+  只有外层包装与「恢复时一律给新 id、重名加序号、版本比本端高就拒收」这条策略是网页端独有的。
+  安卓若要做备份，另立自己的格式，别来改这个 —— 它带 `activeName` 这种纯 UI 概念。
+- **localStorage 的各键**（历史、变量、`openRef`）：读出来先过 sanitize 再用（丢坏条目、
+  保留 id、活动环境指不到就当没指）。这是「用户可能在 DevTools 里手改过、或版本不同字段有增减」的防线，属于端的实现细节。
+- **`openRef`**：记「编辑器当前打开的是哪个集合里的哪条请求」，只有本端有意义；
+  跨端传过来的集合导入后 id 会变，所以导入路径不允许沿用它传来的 id。
