@@ -126,6 +126,15 @@ describe('redactSpec 脱敏', () => {
     expect(out.headers[3]?.value).toBe('application/json')
   })
 
+  it('遮盖后不保留原文任何片段（首尾各留 3 位的老写法会把凭据的头与尾带出本机）', () => {
+    const secret = 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.tail999'
+    const out = redactSpec(makeSpec({ headers: [{ key: 'Authorization', value: secret, enabled: true }] }))
+    const masked = out.headers[0]?.value ?? ''
+    expect(masked).toBe('••••••••')
+    expect(masked).not.toContain(secret.slice(0, 3))
+    expect(masked).not.toContain(secret.slice(-3))
+  })
+
   it('auth 字段：basic 遮密码留账号，bearer 遮 token', () => {
     const basic = redactSpec(makeSpec({ auth: { type: 'basic', basic: { username: 'bob', password: 'pw123456' }, bearer: { token: '' } } }))
     expect(basic.auth.basic.username).toBe('bob')

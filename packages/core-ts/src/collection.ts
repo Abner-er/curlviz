@@ -183,9 +183,14 @@ export function serializeCollection(collection: Collection, pretty = true): stri
 
 const SECRET_HEADER = /^(authorization|proxy-authorization|cookie|x-api-key|api-key|apikey|x-auth-token)$/i
 
-function mask(text: string): string {
-  if (text.length <= 6) return '••••••'
-  return `${text.slice(0, 3)}••••••${text.slice(-3)}`
+/**
+ * 遮盖凭据：整串换成固定点位，一个原文字符都不留。
+ * 以前保留过首尾各 3 位（看着好认是哪个 token），但 M2 起脱敏结果会**离开这台机器**
+ * （导出文件、分享链接、二维码），首尾片段足够拿去撞库或补全，留着就是泄露。
+ * 识别"这是哪条凭据"由头名负责，不该由值负责。
+ */
+function mask(): string {
+  return FULL_MASK
 }
 
 const SECRET_QUERY = /(token|secret|password|passwd|key|signature|sig|auth)/i
@@ -250,15 +255,15 @@ function redactRawArg(arg: string): string {
 export function redactSpec(spec: CurlSpec): CurlSpec {
   const out: CurlSpec = JSON.parse(JSON.stringify(spec)) as CurlSpec
   out.headers = out.headers.map((h) =>
-    SECRET_HEADER.test(h.key) ? { ...h, value: mask(h.value) } : h
+    SECRET_HEADER.test(h.key) ? { ...h, value: mask() } : h
   )
   if (out.auth.type === 'basic') {
-    out.auth.basic = { username: out.auth.basic.username, password: mask(out.auth.basic.password) }
+    out.auth.basic = { username: out.auth.basic.username, password: mask() }
   }
   if (out.auth.type === 'bearer') {
-    out.auth.bearer = { token: mask(out.auth.bearer.token) }
+    out.auth.bearer = { token: mask() }
   }
-  out.query = out.query.map((q) => (SECRET_QUERY.test(q.key) ? { ...q, value: mask(q.value) } : q))
+  out.query = out.query.map((q) => (SECRET_QUERY.test(q.key) ? { ...q, value: mask() } : q))
   out.rawArgs = out.rawArgs.map(redactRawArg)
   return out
 }
