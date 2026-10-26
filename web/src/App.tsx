@@ -1,24 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import {
-  CurlParseError,
-  KNOWN_METHODS,
-  cloneSpec,
-  createDefaultSpec,
-  generateCurl,
-  hasSensitive,
-  parseCurl,
-  redactSpec,
-  suggestName,
-  type CurlSpec,
-  type ParseWarning
-} from '@curlviz/core'
-import type { HistoryEntry, SendReport, Settings } from './types'
-import { HISTORY_LIMIT, KEYS, createStore, browserKeyValue, debounce, memoryKeyValue, type StoreKey } from './lib/storage'
-import { sendSpec } from './lib/http'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { KNOWN_METHODS, createDefaultSpec, generateCurl, type CurlSpec } from '@curlviz/core'
+import type { Settings } from './types'
+import { KEYS, createBrowserStore } from './lib/storage'
 import { varsFor, type EnvState } from './lib/environments'
-import { NO_OPEN_REF, type CollectionState, type OpenRef } from './lib/collections'
-import { applySharePayload, hasShareHash, loadBootState } from './lib/bootstrap'
-import { decodeShare, ShareError } from './lib/share'
+import { boundEntryOf, type CollectionState, type OpenRef } from './lib/collections'
+import { applySharePayload, loadBootState } from './lib/bootstrap'
+import { entryForEditor } from './lib/history'
+import { importCurlText } from './lib/imports'
+import { usePersistence } from './hooks/usePersistence'
+import { useWorkbench } from './hooks/useWorkbench'
+import { useSend } from './hooks/useSend'
+import { useShareImport } from './hooks/useShareImport'
 import { CurlPreview } from './components/CurlPreview'
 import { ImportPanel } from './components/ImportPanel'
 import { ResponsePanel } from './components/ResponsePanel'
@@ -34,203 +26,122 @@ type Tab = 'query' | 'headers' | 'body' | 'auth' | 'options' | 'vars'
 
 const DEFAULT_SETTINGS: Settings = { quoteStyle: 'posix', multiline: true, redactHistory: true }
 
-/** 存储后端：浏览器给不了 localStorage（隐私模式 / file://）就用内存，功能不塌，只如实提示。 */
-const store = createStore(browserKeyValue() ?? memoryKeyValue())
-const storageAvailable = browserKeyValue() !== null
-/** 坏数据收敛 + M1 旧变量迁移 + openRef 校验都在 bootstrap 里，顺序是有依赖的。 */
-const boot = loadBootState(store)
+/**
+ * 存储后端与开机状态在模块加载时算一次：
+ * 浏览器给不了 localStorage（隐私模式 / file://）就用内存后端，功能不塌，只如实提示。
+ * 读回来的东西已经在 bootstrap 里收敛过形状（坏数据、M1 旧变量迁移、openRef 悬空校验）。
+ */
+const session = createBrowserStore()
+const boot = loadBootState(session.store)
+/** 开机要读的两份数据：读一次就够，放进渲染里会变成每次按键都 JSON.parse 一遍。 */
+const initialDraft = session.store.load(KEYS.draft, createDefaultSpec())
+const initialHistory = session.store.load(KEYS.history, [])
+
+/** toast 挂 5 秒：再长就变成挡在界面右下角的常驻噪音。 */
+const TOAST_MS = 5000
 
 export function App() {
-  const [settings, setSettings] = useState<Settings>(() => ({ ...DEFAULT_SETTINGS, ...store.load(KEYS.settings, {}) }))
-  const [spec, setSpec] = useState<CurlSpec>(() => store.load(KEYS.draft, createDefaultSpec()))
-  const [warnings, setWarnings] = useState<ParseWarning[]>([])
+  const [settings, setSettings] = useState<Settings>(() => ({ ...DEFAULT_SETTINGS, ...session.store.load(KEYS.settings, {}) }))
   const [envState, setEnvState] = useState<EnvState>(() => boot.envState)
   const [colState, setColState] = useState<CollectionState>(() => boot.colState)
-  const [activeRef, setActiveRef] = useState<OpenRef>(() => boot.openRef)
-  const [history, setHistory] = useState<HistoryEntry[]>(() => store.load(KEYS.history, []))
-  const [report, setReport] = useState<SendReport | null>(null)
-  const [sending, setSending] = useState(false)
-  const [tab, setTab] = useState<Tab>('query')
-  const [importOpen, setImportOpen] = useState(false)
-  const [share, setShare] = useState<ShareTarget | null>(null)
-  const [toast, setToast] = useState<string | null>(null)
-  const [storageIssue, setStorageIssue] = useState<string | null>(storageAvailable ? null : '本地存储不可用，草稿与历史只在这次会话里有效。')
-  const abortRef = useRef<AbortController | null>(null)
+
+  /** 编辑器这一条请求的内容 / 告警 / 与集合库的关系 / 上次结果，全部由工作台管。 */
+  const wb = useWorkbench(initialDraft, boot.openRef)
+  // 下面几处回调依赖写 load 而不是 wb：load 是稳定引用，wb 那个对象每次渲染都是新的，
+  // 挂在依赖里等于每次渲染都重建回调，子组件跟着白白重渲一次。
+  const { load } = wb
+
+  const persistence = usePersistence(session, {
+    draft: wb.spec,
+    settings,
+    environments: envState,
+    collections: colState,
+    openRef: wb.activeRef
+  })
 
   // 这次生效的变量表：激活环境优先，其它环境兜底（语义来自 core 的 toVarMap）
   const vars = useMemo(() => varsFor(envState), [envState])
 
+  const sender = useSend({
+    spec: wb.spec,
+    vars,
+    settings,
+    setReport: wb.setReport,
+    persistence,
+    initialHistory
+  })
+
   const curl = useMemo(
-    () => generateCurl(spec, { quoteStyle: settings.quoteStyle, multiline: settings.multiline }),
-    [spec, settings.quoteStyle, settings.multiline]
+    () => generateCurl(wb.spec, { quoteStyle: settings.quoteStyle, multiline: settings.multiline }),
+    [wb.spec, settings.quoteStyle, settings.multiline]
   )
 
-  const patch = useCallback((p: Partial<CurlSpec>) => setSpec((old) => ({ ...old, ...p })), [])
+  const [tab, setTab] = useState<Tab>('query')
+  const [importOpen, setImportOpen] = useState(false)
+  const [share, setShare] = useState<ShareTarget | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
 
   const notify = useCallback((message: string) => setToast(message), [])
+
+  /**
+   * toast 定时消失集中在这儿，不散进各面板：
+   * 一句话挂 5 秒和挂 5 分钟是两种完全不同的打扰程度，得有一个地方说了算。
+   */
   useEffect(() => {
     if (toast === null) return
-    const t = setTimeout(() => setToast(null), 5000)
+    const t = setTimeout(() => setToast(null), TOAST_MS)
     return () => clearTimeout(t)
   }, [toast])
 
-  // 启动提示：M1 的扁平变量搬进环境后要删掉旧键，否则每次开机都重复迁一遍
+  // 开机只做一次：M1 的扁平变量搬进环境后要删掉旧键，否则每次开机重复迁一遍
   useEffect(() => {
-    if (boot.didMigrate) store.remove(KEYS.vars)
-    if (boot.note) setToast(boot.note)
-  }, [])
-
-  // 草稿防抖落盘：每敲一个键就写 localStorage 会明显卡，而且没必要
-  const persistDraft = useMemo(() => debounce((s: CurlSpec) => {
-    const r = store.save(KEYS.draft, s)
-    if (!r.ok) setStorageIssue(`本地存储写入失败（${r.reason === 'quota' ? '空间不足' : '不可用'}），草稿可能留不住。`)
-  }, 500), [])
-  useEffect(() => {
-    persistDraft(spec)
-  }, [spec, persistDraft])
-  useEffect(() => {
-    store.save(KEYS.settings, settings)
-  }, [settings])
-
-  /** 集合 / 环境 / 打开位置是"用户的资料库"，写失败必须说清楚，不能假装存好了。 */
-  const persist = useCallback((key: StoreKey, value: unknown, label: string) => {
-    const r = store.save(key, value)
-    if (!r.ok) {
-      setStorageIssue(`${label}写入本地存储失败（${r.reason === 'quota' ? '空间不足' : '不可用'}），这部分改动关掉页面就没了。`)
-    }
-  }, [])
-  useEffect(() => persist(KEYS.environments, envState, '环境变量'), [envState, persist])
-  useEffect(() => persist(KEYS.collections, colState, '集合'), [colState, persist])
-  useEffect(() => persist(KEYS.openRef, activeRef, '打开位置'), [activeRef, persist])
-
-  // 链接里带 #share= 时开机直接导入：这是"同事发你一条命令"最短的路
-  useEffect(() => {
-    const hash = globalThis.location?.hash ?? ''
-    if (!hasShareHash(hash)) return
-    let cancelled = false
-    decodeShare(hash)
-      .then((payload) => {
-        if (cancelled) return
-        const applied = applySharePayload(payload, colState, envState)
-        if (applied.spec) {
-          setSpec(applied.spec)
-          setActiveRef(NO_OPEN_REF)
-        }
-        if (applied.collectionId) setColState(applied.colState)
-        setEnvState(applied.envState)
-        setWarnings([])
-        setToast(applied.note)
-      })
-      .catch((e: unknown) => {
-        if (cancelled) return
-        setToast(e instanceof ShareError ? `${e.message}（${e.hint}）` : `分享链接解不开：${String(e)}`)
-      })
-      .finally(() => {
-        // 必须把 hash 抹掉：不然刷新一次就重复导入一次，集合里会多出一样的集合
-        const loc = globalThis.location
-        if (globalThis.history?.replaceState && loc) {
-          globalThis.history.replaceState(null, '', loc.pathname + loc.search)
-        }
-      })
-    return () => {
-      cancelled = true
-    }
-    // 只在挂载那一次处理分享链接，后续状态变化不该再触发导入
+    if (boot.didMigrate) persistence.erase(KEYS.vars)
+    if (boot.note) notify(boot.note)
+    // 只在挂载那一次处理启动状态，后续状态变化不该再触发
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const onSend = useCallback(async () => {
-    const controller = new AbortController()
-    abortRef.current = controller
-    setSending(true)
-    setReport(null)
-    const r = await sendSpec(spec, {
-      vars,
-      generate: { quoteStyle: settings.quoteStyle, multiline: settings.multiline },
-      signal: controller.signal
-    })
-    abortRef.current = null
-    setSending(false)
-    setReport(r)
-    setHistory((old) => {
-      const ok = r.outcome.ok
-      const entry: HistoryEntry = {
-        id: `${r.sentAt}-${Math.random().toString(36).slice(2, 8)}`,
-        at: r.sentAt,
-        spec: settings.redactHistory && hasSensitive(spec) ? redactSpec(spec) : cloneSpec(spec),
-        redacted: settings.redactHistory && hasSensitive(spec),
-        result: ok
-          ? { status: r.outcome.response.status, ok: r.outcome.response.ok, ms: r.outcome.response.totalMs }
-          : { error: r.outcome.failure.message }
-      }
-      const next = [entry, ...old].slice(0, HISTORY_LIMIT)
-      const res = store.save(KEYS.history, next)
-      if (!res.ok) setStorageIssue(`历史写入失败（${res.reason === 'quota' ? '空间不足' : '不可用'}），只保留在这次会话里。`)
-      return next
-    })
-  }, [spec, vars, settings])
+  /** 地址栏带 #share= 就开机导入；这条链接只处理一次，之后不再触发。 */
+  useShareImport({
+    onPayload: (payload) => {
+      const applied = applySharePayload(payload, colState, envState)
+      if (applied.spec) load({ spec: applied.spec })
+      if (applied.collectionId) setColState(applied.colState)
+      setEnvState(applied.envState)
+      notify(applied.note)
+    },
+    onError: notify
+  })
 
-  const onCancel = useCallback(() => {
-    abortRef.current?.abort()
-  }, [])
-
-  // Ctrl/Cmd+Enter 发送：运维改一条命令要按几十次，少一次鼠标位移
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && spec.url.trim() !== '' && !sending) {
-        e.preventDefault()
-        void onSend()
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onSend, sending, spec.url])
-
-  const onImport = useCallback((text: string): string | null => {
-    try {
-      const result = parseCurl(text)
-      setSpec(result.spec)
-      setWarnings(result.warnings)
+  const onImport = useCallback(
+    (text: string): string | null => {
+      const r = importCurlText(text)
+      if (!r.ok) return r.error
+      load({ spec: r.spec, warnings: r.warnings })
       setImportOpen(false)
-      // 粘进来的新命令跟集合里没有关系，绑定要清掉，否则"更新原条目"会改错东西
-      setActiveRef(NO_OPEN_REF)
-      if (result.spec.name === '' || result.spec.name === '未命名请求') patch({ name: suggestName(result.spec) })
       return null
-    } catch (e) {
-      if (e instanceof CurlParseError) return `解析失败：${e.message}`
-      return `解析失败：${String(e)}`
-    }
-  }, [patch])
+    },
+    [load]
+  )
 
-  const newRequest = useCallback(() => {
-    setSpec(createDefaultSpec())
-    setWarnings([])
-    setReport(null)
-    setActiveRef(NO_OPEN_REF)
-  }, [])
+  const newRequest = useCallback(() => load({ spec: createDefaultSpec() }), [load])
 
-  const openFromCollection = useCallback((target: CurlSpec, ref: OpenRef) => {
-    setSpec(cloneSpec(target))
-    setActiveRef(ref)
-    setWarnings([])
-    setReport(null)
-    notify('已从集合取回，改完可以「更新原条目」。')
-  }, [notify])
+  const openFromCollection = useCallback(
+    (target: CurlSpec, ref: OpenRef) => {
+      load({ spec: target, ref })
+      notify('已从集合取回，改完可以「更新原条目」。')
+    },
+    [load, notify]
+  )
 
-  const boundEntry = useMemo(() => {
-    if (activeRef.collectionId === null || activeRef.requestId === null) return null
-    const col = colState.collections.find((c) => c.id === activeRef.collectionId)
-    const req = col?.requests.find((r) => r.id === activeRef.requestId)
-    if (!col || !req) return null
-    return { collection: col.name, request: req.spec.name || '未命名请求' }
-  }, [colState, activeRef])
+  const boundEntry = useMemo(() => boundEntryOf(colState, wb.activeRef), [colState, wb.activeRef])
 
   const tabs: { value: Tab; label: string; badge?: number }[] = [
-    { value: 'query', label: 'Query', badge: spec.query.filter((q) => q.enabled && q.key !== '').length },
-    { value: 'headers', label: 'Headers', badge: spec.headers.filter((h) => h.enabled && h.key !== '').length },
-    { value: 'body', label: 'Body', badge: spec.body.type === 'none' ? 0 : 1 },
-    { value: 'auth', label: 'Auth', badge: spec.auth.type === 'none' ? 0 : 1 },
-    { value: 'options', label: '选项', badge: spec.rawArgs.length },
+    { value: 'query', label: 'Query', badge: wb.spec.query.filter((q) => q.enabled && q.key !== '').length },
+    { value: 'headers', label: 'Headers', badge: wb.spec.headers.filter((h) => h.enabled && h.key !== '').length },
+    { value: 'body', label: 'Body', badge: wb.spec.body.type === 'none' ? 0 : 1 },
+    { value: 'auth', label: 'Auth', badge: wb.spec.auth.type === 'none' ? 0 : 1 },
+    { value: 'options', label: '选项', badge: wb.spec.rawArgs.length },
     { value: 'vars', label: '变量', badge: Object.keys(vars).length }
   ]
 
@@ -247,8 +158,7 @@ export function App() {
             onChange={(e) =>
               setEnvState((old) => ({
                 ...old,
-                activeName:
-                  old.environments.find((x) => x.name === e.target.value)?.name ?? null
+                activeName: old.environments.find((x) => x.name === e.target.value)?.name ?? null
               }))
             }
             style={{ marginLeft: '0.35rem', maxWidth: '10rem' }}
@@ -293,21 +203,21 @@ export function App() {
 
       <main>
         <div>
-          {storageIssue && (
+          {persistence.storageIssue && (
             <ul className="notes" style={{ marginBottom: '0.8rem' }}>
-              <li className="err">{storageIssue}</li>
+              <li className="err">{persistence.storageIssue}</li>
             </ul>
           )}
 
           <CollectionsPanel
             state={colState}
             environments={envState.environments}
-            currentSpec={spec}
-            activeRef={activeRef}
+            currentSpec={wb.spec}
+            activeRef={wb.activeRef}
             defaultRedact={settings.redactHistory}
             onStateChange={setColState}
             onOpen={openFromCollection}
-            onSaved={setActiveRef}
+            onSaved={wb.bind}
             onShare={setShare}
             onNotice={notify}
           />
@@ -317,7 +227,7 @@ export function App() {
             <div className="row">
               <div style={{ width: '12rem' }}>
                 <label>名称</label>
-                <input value={spec.name} onChange={(e) => patch({ name: e.target.value })} />
+                <input value={wb.spec.name} onChange={(e) => wb.patch({ name: e.target.value })} />
               </div>
               {boundEntry && (
                 <span className="muted" style={{ paddingBottom: '0.4rem' }}>
@@ -327,9 +237,11 @@ export function App() {
             </div>
             <div className="url-bar" style={{ marginTop: '0.5rem' }}>
               <select
-                value={KNOWN_METHODS.includes(spec.method as (typeof KNOWN_METHODS)[number]) ? spec.method : 'CUSTOM'}
+                value={
+                  KNOWN_METHODS.includes(wb.spec.method as (typeof KNOWN_METHODS)[number]) ? wb.spec.method : 'CUSTOM'
+                }
                 onChange={(e) => {
-                  if (e.target.value !== 'CUSTOM') patch({ method: e.target.value })
+                  if (e.target.value !== 'CUSTOM') wb.patch({ method: e.target.value })
                 }}
                 aria-label="方法"
                 style={{ width: '7.5rem' }}
@@ -343,23 +255,23 @@ export function App() {
               </select>
               <input
                 className="url"
-                value={spec.method}
-                onChange={(e) => patch({ method: e.target.value.toUpperCase() })}
+                value={wb.spec.method}
+                onChange={(e) => wb.patch({ method: e.target.value.toUpperCase() })}
                 aria-label="方法名"
                 title="curl 不限制方法名，可以直接改"
               />
               <input
                 className="url grow"
-                value={spec.url}
+                value={wb.spec.url}
                 placeholder="https://internal.api/v1/list"
                 spellCheck={false}
-                onChange={(e) => patch({ url: e.target.value })}
+                onChange={(e) => wb.patch({ url: e.target.value })}
                 aria-label="URL"
               />
-              {sending ? (
-                <button onClick={onCancel}>取消</button>
+              {sender.sending ? (
+                <button onClick={sender.cancel}>取消</button>
               ) : (
-                <button className="primary" onClick={() => void onSend()} disabled={spec.url.trim() === ''}>
+                <button className="primary" onClick={() => void sender.send()} disabled={!sender.canSend}>
                   发送
                 </button>
               )}
@@ -373,15 +285,15 @@ export function App() {
               </button>
               <button
                 className="mini"
-                onClick={() => setShare({ kind: 'request', spec, label: spec.name || '当前请求' })}
-                disabled={spec.url.trim() === ''}
+                onClick={() => setShare({ kind: 'request', spec: wb.spec, label: wb.spec.name || '当前请求' })}
+                disabled={!sender.canSend}
                 title="生成链接 / 二维码，对方打开就导入（默认脱敏，本地生成）"
               >
                 分享这条
               </button>
               <span className="muted">Ctrl+Enter 发送</span>
             </div>
-            {spec.url.trim() === '' && <p className="muted">填了 URL 才能发送。</p>}
+            {!sender.canSend && <p className="muted">填了 URL 才能发送。</p>}
           </section>
 
           {importOpen && <ImportPanel onSubmit={onImport} onClose={() => setImportOpen(false)} />}
@@ -398,8 +310,8 @@ export function App() {
 
             {tab === 'query' && (
               <KeyValueTable
-                rows={spec.query}
-                onChange={(rows) => patch({ query: rows })}
+                rows={wb.spec.query}
+                onChange={(rows) => wb.patch({ query: rows })}
                 keyPlaceholder="参数名"
                 valuePlaceholder="值"
                 pairLabel="参数 / 值"
@@ -407,39 +319,35 @@ export function App() {
             )}
             {tab === 'headers' && (
               <KeyValueTable
-                rows={spec.headers}
-                onChange={(rows) => patch({ headers: rows })}
+                rows={wb.spec.headers}
+                onChange={(rows) => wb.patch({ headers: rows })}
                 keyPlaceholder="Header-Name"
                 valuePlaceholder="值（留空输出 K: 表示发空头）"
                 pairLabel="头 / 值"
               />
             )}
-            {tab === 'body' && <BodyEditor spec={spec} onChange={patch} />}
-            {tab === 'auth' && <AuthEditor auth={spec.auth} onChange={(a) => patch({ auth: a })} />}
+            {tab === 'body' && <BodyEditor spec={wb.spec} onChange={wb.patch} />}
+            {tab === 'auth' && <AuthEditor auth={wb.spec.auth} onChange={(a) => wb.patch({ auth: a })} />}
             {tab === 'options' && (
               <OptionsEditor
-                options={spec.options}
-                rawArgs={spec.rawArgs}
-                onChange={(o) => patch({ options: o })}
-                onDropRawArg={(i) => patch({ rawArgs: spec.rawArgs.filter((_, k) => k !== i) })}
+                options={wb.spec.options}
+                rawArgs={wb.spec.rawArgs}
+                onChange={(o) => wb.patch({ options: o })}
+                onDropRawArg={(i) => wb.patch({ rawArgs: wb.spec.rawArgs.filter((_, k) => k !== i) })}
               />
             )}
-            {tab === 'vars' && <VarsPanel spec={spec} state={envState} onChange={setEnvState} />}
+            {tab === 'vars' && <VarsPanel spec={wb.spec} state={envState} onChange={setEnvState} />}
           </section>
 
           <IoPanel
             colState={colState}
             envState={envState}
-            currentSpec={spec}
-            currentName={boundEntry?.request ?? spec.name}
+            currentSpec={wb.spec}
+            currentName={boundEntry?.request ?? wb.spec.name}
             defaultRedact={settings.redactHistory}
             onColState={setColState}
             onEnvState={setEnvState}
-            onApplySpec={(s) => {
-              setSpec(s)
-              setActiveRef(NO_OPEN_REF)
-              setWarnings([])
-            }}
+            onApplySpec={(s) => load({ spec: s })}
             onImportCurl={onImport}
             onNotice={notify}
           />
@@ -448,29 +356,24 @@ export function App() {
         <div>
           <CurlPreview
             curl={curl}
-            warnings={warnings}
+            warnings={wb.warnings}
             quoteStyle={settings.quoteStyle}
             onFixQuoteStyle={() => setSettings({ ...settings, quoteStyle: 'windows' })}
           />
-          <ResponsePanel report={report} sending={sending} />
+          <ResponsePanel report={wb.report} sending={sender.sending} />
           <HistoryPanel
-            items={history}
+            items={sender.history}
             quoteStyle={settings.quoteStyle}
             multiline={settings.multiline}
             onPick={(e) => {
-              setSpec(cloneSpec(e.spec))
-              setWarnings([])
-              setActiveRef(NO_OPEN_REF)
+              const picked = entryForEditor(e)
+              load({ spec: picked.spec })
+              // 脱敏过的历史条目必须当场说一句：不然用户拿 •••••••• 当真凭据发出去，
+              // 收到 401 只会怀疑接口坏了
+              if (picked.note) notify(picked.note)
             }}
-            onDelete={(id) => {
-              const next = history.filter((h) => h.id !== id)
-              setHistory(next)
-              store.save(KEYS.history, next)
-            }}
-            onClear={() => {
-              setHistory([])
-              store.remove(KEYS.history)
-            }}
+            onDelete={sender.removeHistory}
+            onClear={sender.clearHistory}
           />
         </div>
       </main>
