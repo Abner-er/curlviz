@@ -191,11 +191,16 @@ export function generateCurl(spec: CurlSpec, opts?: GenerateOptions): string {
   if (!multiline) return segments.join(' ')
 
   const lastIndex = segments.length - 1
+  let commandLineSeen = false
   return segments
     .map((seg, i) => {
       // 注释行不带续行符：它不是命令的一部分，接 ` \` 会让 bash 把下一行并进注释的延续里
-      const line = i === lastIndex || seg.startsWith('#') ? seg : `${seg} \\`
-      return i === 0 || seg.startsWith('#') ? line : `${indent}${line}`
+      const withCont = i === lastIndex || seg.startsWith('#') ? seg : `${seg} \\`
+      if (seg.startsWith('#')) return withCont
+      // 命令行首行必须顶格；开了 withNameComment 时它就是第一条非注释段
+      const isCommandHead = !commandLineSeen
+      commandLineSeen = true
+      return isCommandHead ? withCont : `${indent}${withCont}`
     })
     .join('\n')
 }
