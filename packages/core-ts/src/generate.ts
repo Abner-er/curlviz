@@ -146,8 +146,20 @@ function msToSeconds(ms: number): string {
 }
 
 /**
+ * `--url-query` 的值：`k=v`。
+ *
+ * 实测 curl 8.19.0：`--url-query x` 线上是 `/?x`，`--url-query 'x='` 线上是 `/?x=`，
+ * 两者**不一样**。CurlSpec 只存 key/value，分不出这两种写法，这里统一取不带等号的那版：
+ * value 为空 ⇒ 输出裸 `k`（代价是 `x=` 被收拢成 `x`，登记在 PLAN 附录 A）。
+ * key 为空时输出 `=v`，不能丢——丢了就等于把用户的一个参数删掉了。
+ */
+function urlQueryArg(p: Param, q: (v: string) => string): string {
+  return `--url-query ${q(p.value === '' ? p.key : `${p.key}=${p.value}`)}`
+}
+
+/**
  * 生成 curl 命令。
- * 输出顺序：curl URL → 方法 → 选项 → headers → auth → body → rawArgs，
+ * 输出顺序：curl URL → 方法 → --url-query → 选项 → headers → auth → rawArgs，
  * 与主流工具习惯一致，diff 友好。
  */
 export function generateCurl(spec: CurlSpec, opts?: GenerateOptions): string {
@@ -157,15 +169,31 @@ export function generateCurl(spec: CurlSpec, opts?: GenerateOptions): string {
   const mergeQuery = opts?.mergeQueryIntoUrl ?? true
   const q = makeQuoter(style)
 
-  const url = mergeQuery ? buildUrlWithQuery(spec.url, spec.query) : spec.url
+  // viaUrlQuery 的条目**不能**拼进 URL：curl 的 --url-query 用自己的编码表
+  // （空格→`+`、`!`→`%21`、`~` 原样），和 encodeURIComponent 不一样，
+  // 拼进 URL 等于偷偷改了线上字节。见 types.ts 的 Param.viaUrlQuery。
+  const viaUrlQuery = mergeQuery ? spec.query.filter((p) => p.viaUrlQuery === true && p.enabled) : []
+  const inlineQuery = mergeQuery ? spec.query.filter((p) => p.viaUrlQuery !== true) : []
+  const url = mergeQuery ? buildUrlWithQuery(spec.url, inlineQuery) : spec.url
   const parts: string[] = []
 
+  const body = bodyArgs(spec, q)
+  const hasBodyArgs = body.args.length > 0
+
+  // 方法行。规则是"只在 curl 猜不到的时候才写 -X"：
+  //   - curl 自己会推断：有 -d/-F → POST，没有 → GET。
+  //   - 实测 curl 8.19.0：`-d 'x=1' -L` 在 301 后会**降级成 GET**，
+  //     而 `-X POST -d 'x=1' -L` 一路保持 POST。给隐式 POST 补上 `-X POST`
+  //     就等于改了重定向行为，所以隐式情形必须省略。
+  //   - 用户真写了 -X（methodExplicit）时必须留下，否则 `-X GET` + body 会被 curl 发成 POST。
   // HEAD 用 -I 而不是 -X HEAD：两者发出的请求完全一样，但 `-X HEAD` 会让 curl
   // 一直等一个永远不会来的响应体（社区公认的坑），看起来像命令卡死。
-  // CurlSpec 表达不了"等不等 body"这个区别，所以统一取不卡死的那个写法。
   const method = spec.method.toUpperCase()
+  const inferred = hasBodyArgs ? 'POST' : 'GET'
   if (method === 'HEAD') parts.push('-I')
-  else if (method !== 'GET') parts.push(`-X ${method}`)
+  else if (spec.methodExplicit === true || method !== inferred) parts.push(`-X ${method}`)
+
+  parts.push(...viaUrlQuery.map((p) => urlQueryArg(p, q)))
   parts.push(...optionArgs(spec.options, q))
 
   const headers = spec.headers.filter(
@@ -175,7 +203,6 @@ export function generateCurl(spec: CurlSpec, opts?: GenerateOptions): string {
 
   parts.push(...authArgs(spec, q))
 
-  const body = bodyArgs(spec, q)
   if (body.autoContentType) {
     parts.push(headerArg({ key: 'Content-Type', value: body.autoContentType, enabled: true }, q))
   }

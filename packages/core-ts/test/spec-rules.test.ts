@@ -31,9 +31,12 @@ function blank(): CurlSpec {
 }
 
 describe('§4.1 输出顺序', () => {
-  it('curl URL → 方法 → 选项 → headers → auth → 自动CT → body → rawArgs', () => {
+  it('curl URL → 方法 → --url-query → 选项 → headers → auth → 自动CT → body → rawArgs', () => {
     const spec = blank()
     spec.method = 'POST'
+    // 隐式 POST（curl 见到 body 自己就发 POST）不再输出 -X，这里显式标注才测得到方法段
+    spec.methodExplicit = true
+    spec.query = [{ key: 'u', value: '1', enabled: true, viaUrlQuery: true }]
     spec.options = { ...spec.options, followRedirects: true, insecure: true, timeoutMs: 5000 }
     spec.headers = [{ key: 'X-A', value: '1', enabled: true }]
     spec.auth = { type: 'basic', basic: { username: 'u', password: 'p' }, bearer: { token: '' } }
@@ -44,6 +47,7 @@ describe('§4.1 输出顺序', () => {
     const order = [
       'curl ',
       '-X POST',
+      "--url-query 'u=1'",
       '-L',
       '-k',
       '-m 5',
@@ -61,7 +65,7 @@ describe('§4.1 输出顺序', () => {
     }
   })
 
-  it('HEAD 出 -I，其它非 GET 出 -X；GET 什么都不带', () => {
+  it('HEAD 出 -I；-X 只在"curl 猜不到"或用户真写了时才出', () => {
     const head = blank()
     head.method = 'HEAD'
     expect(generateCurlSingleLine(head)).toBe("curl 'https://api.example.com/ping' -I")
@@ -71,6 +75,23 @@ describe('§4.1 输出顺序', () => {
     expect(generateCurlSingleLine(del)).toContain('-X DELETE')
 
     expect(generateCurlSingleLine(blank())).toBe("curl 'https://api.example.com/ping'")
+
+    // 隐式 POST（curl 见到 body 自己就 POST）不能补 -X：实测 `-d 'x=1' -L` 在 301 后降级成 GET，
+    // 而 `-X POST -d 'x=1' -L` 一路保持 POST，补 flag 等于改了重定向语义。
+    const implicitPost = blank()
+    implicitPost.method = 'POST'
+    implicitPost.body = { ...implicitPost.body, type: 'form', form: [{ key: 'a', value: '1', enabled: true }] }
+    expect(generateCurlSingleLine(implicitPost)).toBe("curl 'https://api.example.com/ping' -d 'a=1'")
+
+    // 用户真写了 -X 就得留下：`-X GET` + body 是有意的"GET 带 body"，去掉 flag 会变 POST。
+    const explicitGet = blank()
+    explicitGet.methodExplicit = true
+    expect(generateCurlSingleLine(explicitGet)).toBe("curl 'https://api.example.com/ping' -X GET")
+
+    const getWithBody = blank()
+    getWithBody.methodExplicit = true
+    getWithBody.body = { ...getWithBody.body, type: 'raw', raw: 'x' }
+    expect(generateCurlSingleLine(getWithBody)).toBe("curl 'https://api.example.com/ping' -X GET --data-binary 'x'")
   })
 
   it('多行两空格缩进、行尾反斜杠，注释行不带续行符', () => {
@@ -98,8 +119,9 @@ describe('§4.2 引号风格', () => {
   it('windows：双引号包裹，内部反斜杠翻倍、双引号转义，不碰单引号', () => {
     const spec = blank()
     spec.body = { ...spec.body, type: 'raw', raw: String.raw`C:\path "q" it's` }
+    // GET + body ⇒ 必须有 -X GET，否则 curl 自己发成 POST
     expect(generateCurlSingleLine(spec, { quoteStyle: 'windows' })).toBe(
-      String.raw`curl "https://api.example.com/ping" --data-binary "C:\\path \"q\" it's"`
+      String.raw`curl "https://api.example.com/ping" -X GET --data-binary "C:\\path \"q\" it's"`
     )
   })
 })

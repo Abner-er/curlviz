@@ -106,6 +106,7 @@ const MAPPED: Record<string, Exclude<ArgKind, 'unknown'>> = {
   'data-raw': 'value',
   'data-binary': 'value',
   'data-urlencode': 'value',
+  'url-query': 'value',
   form: 'value',
   'form-string': 'value',
   user: 'value',
@@ -454,6 +455,10 @@ class Assembler {
   /** 与 explicitMethod 对应的原始 `-X` Arg，冲突回填时要用。 */
   private explicitArg: Arg | null = null
   private authUserValue: string | null = null
+  /** 多个 `-b` 的值，按 curl 的规则用 "; " 拼成一个 Cookie 头。 */
+  private readonly cookieValues: string[] = []
+  /** 第一条 `-b` 出现时 headers 的长度——Cookie 头插回这里，保持"按命令顺序填字段"。 */
+  private cookieAnchor = -1
 
   warn(code: ParseWarning['code'], message: string, at?: number): void {
     this.warnings.push({ code, message, at })
@@ -542,8 +547,27 @@ class Assembler {
         return
       case 'cookie':
         if (arg.value === null) return this.missing(arg)
-        this.headers.push({ key: 'Cookie', value: arg.value, enabled: true })
+        // 实测 curl 8.19.0：多个 -b 用 "; " 拼成**一个** Cookie 头（`-b a=1 -b b=2` → `a=1; b=2`）。
+        // 旧写法是给每条 push 一个 Cookie 头、再由 dedupe 用 ',' 拼接，
+        // 于是线上发成 `a=1,b=2`——Cookie 头变成非法形状，服务端直接认不出。
+        this.cookieValues.push(arg.value)
+        if (this.cookieAnchor === -1) this.cookieAnchor = this.headers.length
         return
+      case 'url-query': {
+        if (arg.value === null) return this.missing(arg)
+        const eq = arg.value.indexOf('=')
+        this.spec.query.push(
+          eq === -1
+            ? { key: arg.value, value: '', enabled: true, viaUrlQuery: true }
+            : {
+                key: arg.value.slice(0, eq),
+                value: arg.value.slice(eq + 1),
+                enabled: true,
+                viaUrlQuery: true
+              }
+        )
+        return
+      }
       case 'referer':
         if (arg.value === null) return this.missing(arg)
         this.headers.push({ key: 'Referer', value: arg.value, enabled: true })
@@ -635,26 +659,57 @@ class Assembler {
     this.headers.push({ key, value, enabled: true })
   }
 
-  /** 收尾：认证、body、方法，全部在这里定型。 */
+  /**
+   * 把 `-b` 们合成一个 Cookie 头，插回第一条 `-b` 所在的位置。
+   *
+   * 实测 curl 8.19.0：
+   *   - `-b 'x=1;y=2' -b 'z=3'` 发出去的是**一个** `Cookie: x=1;y=2; z=3`（连接符是 "; "）。
+   *   - Cookie 永远排在自定义 `-H` 之前，与 `-b` 写在 `-H` 前还是后无关
+   *     （`-b a=1 -H 'X-A: 1'` 与 `-H 'X-A: 1' -b a=1` 线上头序完全相同）。
+   *   - 同一条命令里另有 `-H 'Cookie: …'` 时 curl 让 -H 赢、-b 被丢弃。
+   * 这里按"命令出现顺序"插回锚点：既符合上面的观察，也让 `-b -e` 这类命令
+   * 生成的 `-H` 顺序和用户手写的一致。
+   */
+  private applyCookies(): void {
+    if (this.cookieValues.length === 0) return
+    if (this.headers.some((h) => h.key.toLowerCase() === 'cookie')) {
+      this.warn(
+        'flag-conflict',
+        `-H 'Cookie: …' 与 -b 同时出现，curl 以 -H 为准，${this.cookieValues.length} 个 -b 已丢弃`
+      )
+      return
+    }
+    const at = this.cookieAnchor === -1 ? this.headers.length : this.cookieAnchor
+    this.headers.splice(at, 0, { key: 'Cookie', value: this.cookieValues.join('; '), enabled: true })
+  }
+
+  /** 把已经原样保留过的 -d 系列重新写回 rawArgs（值用原始 token 文本，不重编码）。 */
   private keepData(d: { flagText: string; flag: Token; valueToken: Token }): void {
     this.keepPair(d.flagText, d.valueToken !== d.flag ? d.valueToken.raw : null)
   }
 
+  /** 收尾：Cookie、认证、body、方法，全部在这里定型。 */
   finalize(): void {
-    this.spec.headers = dedupeHeaders(this.headers)
+    this.applyCookies()
+    // 不再合并同名头：实测 curl 8.19.0 对 `-H 'X-A: 1' -H 'X-A: 2'` 是**发两行**，
+    // 旧的 dedupe 拼成 `X-A: 1,2` 等于改了请求。（Content-Type 的"取后者"另有一套，见 addHeader。）
+    this.spec.headers = this.headers
     this.applyAuth()
     this.applyBody()
     this.spec.method = this.pickMethod()
+    // 记下用户是否真的写了 -X：隐式 POST 补上 -X 会改重定向语义，见 types.ts 的 methodExplicit。
+    // HEAD 例外：生成器对 HEAD 永远输出 -I（`-X HEAD` 会死等响应体），
+    // 显式性带不下去，留着会让往返第二次从 true 翻成 false，破坏幂等契约。
+    this.spec.methodExplicit = this.explicitMethod !== null && this.spec.method !== 'HEAD'
     // -I 被 -X 抢掉时（curl -I url -X GET），不能静默吞掉：原样留在 rawArgs 里，
     // 重新生成时还会带上，用户看得见。
     if (this.headArg !== null && this.spec.method !== 'HEAD') {
       this.keep(this.headArg)
-      // 生成器只在方法非 GET 时输出 -X，所以胜出方法是 GET 时 -X 必须一起留下，
-      // 否则重新生成只剩裸 -I，方法会从 GET 翻成 HEAD。
-      if (this.explicitArg !== null && this.spec.method === 'GET') this.keep(this.explicitArg)
+      // `-X` 不再回填：现在 methodExplicit=true 时生成器自己就会输出 `-X METHOD`，
+      // 留下原文会变成两条 -X（旧规则是"GET 不输出 -X"，那时才需要回填）。
       this.warn(
         'flag-conflict',
-        `${this.headArg.source} 与 ${this.explicitArg?.source ?? '-X'} ${this.spec.method} 同时出现，方法按 -X 取 ${this.spec.method}，两者均已原样保留`,
+        `${this.headArg.source} 与 ${this.explicitArg?.source ?? '-X'} ${this.spec.method} 同时出现，方法按 -X 取 ${this.spec.method}，${this.headArg.source} 原样保留`,
         this.headArg.flag.start
       )
     }
@@ -809,19 +864,6 @@ class Assembler {
 
 function emptyBody(): RequestBody {
   return { type: 'none', json: '', form: [], multipart: [], raw: '' }
-}
-
-function dedupeHeaders(list: Param[]): Param[] {
-  const out: Param[] = []
-  for (const h of list) {
-    const dup = out.find((x) => x.key.toLowerCase() === h.key.toLowerCase())
-    if (dup) {
-      dup.value = dup.value === '' ? h.value : `${dup.value},${h.value}`
-      continue
-    }
-    out.push(h)
-  }
-  return out
 }
 
 /* ================================================================== */

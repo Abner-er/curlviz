@@ -86,7 +86,7 @@
     },
     {
       "id": "head-conflict-x-get",
-      "title": "-I 与 -X GET 冲突：方法按 -X 取 GET，两个 flag 都留在 rawArgs",
+      "title": "-I 与 -X GET 冲突：方法按 -X 取 GET（实测 -X 恒赢、与书写顺序无关），-X 走方法槽，rawArgs 只留 -I",
       "tags": [
         "options",
         "rawArgs",
@@ -96,9 +96,9 @@
       "curl": "curl 'https://api.example.com/ping' -I -X GET",
       "spec": {
         "method": "GET",
+        "methodExplicit": true,
         "rawArgs": [
-          "-I",
-          "-X GET"
+          "-I"
         ]
       },
       "expectWarnings": [

@@ -36,6 +36,16 @@ export interface Param {
   key: string
   value: string
   enabled: boolean
+  /**
+   * 仅 query 用：这条是 `--url-query` 提供的，生成时**必须**继续输出
+   * `--url-query 'k=v'`，不许拼进 URL。
+   *
+   * 原因是实测的编码差（本机 curl 8.19.0）：`--url-query` 走 curl 自己的编码表，
+   * 空格→`+`、`!`→`%21`、`(`→`%28`、`*`→`%2A`、`~` 原样；我们的 percent-encode
+   * （encodeURIComponent）是空格→`%20`、`!()~*` 原样。**两边编码不同**，
+   * 把它并进 URL 等于改用户要发的字节。
+   */
+  viaUrlQuery?: boolean
 }
 
 /** multipart 表单项：text 走 `-F 'k=v'`，file 走 `-F 'k=@path;type=...'`。 */
@@ -89,6 +99,15 @@ export interface CurlSpec {
   version: number
   name: string
   method: HttpMethod
+  /**
+   * 方法是否由 `-X` 显式给出。缺省 `undefined` 视同 `false`。
+   *
+   * 必须记这一笔，因为 `-X` 不只是"写不写"的差别（本机 curl 8.19.0 实测）：
+   * `curl -d 'x=1' -L` 撞上 301/302 会**降级成 GET**，
+   * 而 `curl -X POST -d 'x=1' -L` 会一路**保持 POST**。
+   * 生成器若给"由 `-d` 推断出的 POST"补一个 `-X POST`，重定向后的方法就翻了。
+   */
+  methodExplicit?: boolean
   url: string
   query: Param[]
   headers: Param[]

@@ -43,12 +43,20 @@ function asNumber(value: unknown, fallback: number): number {
 function normalizeParam(value: unknown): Param | null {
   const o = asRecord(value)
   const key = o['key']
-  if (typeof key !== 'string' || key === '') return null
-  return {
+  if (typeof key !== 'string') return null
+  const viaUrlQuery = o['viaUrlQuery'] === true
+  // viaUrlQuery 允许空 key：`--url-query '=v'` 是合法输入（实测 curl 发成 `/?v`），
+  // 按常规规则丢掉等于删了用户一个参数。
+  if (key === '' && !viaUrlQuery) return null
+  const out: Param = {
     key,
     value: asString(o['value'], ''),
     enabled: asBoolean(o['enabled'], true)
   }
+  // 丢了这枚标记，--url-query 参数就会被拼进 URL，curl 的编码表 ≠ encodeURIComponent，
+  // 等于导入一次改一次请求。见 types.ts。
+  if (viaUrlQuery) out.viaUrlQuery = true
+  return out
 }
 
 function normalizeParams(value: unknown): Param[] {
@@ -126,7 +134,7 @@ export function normalizeSpec(value: unknown): CurlSpec {
   const rawArgs = Array.isArray(o['rawArgs'])
     ? o['rawArgs'].filter((a): a is string => typeof a === 'string')
     : []
-  return {
+  const spec: CurlSpec = {
     version: asNumber(o['version'], CURLSPEC_VERSION),
     name: asString(o['name'], ''),
     method: asString(o['method'], 'GET').toUpperCase() || 'GET',
@@ -138,6 +146,9 @@ export function normalizeSpec(value: unknown): CurlSpec {
     options: normalizeOptions(o['options']),
     rawArgs
   }
+  // 丢了这枚标记，`-X POST … -L` 重新生成时会变成隐式 POST，301 后 curl 改发 GET。
+  if (o['methodExplicit'] === true) spec.methodExplicit = true
+  return spec
 }
 
 function normalizeEnvironment(value: unknown): Environment {

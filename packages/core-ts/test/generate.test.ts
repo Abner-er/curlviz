@@ -99,7 +99,9 @@ describe('引号与转义', () => {
     const spec = blank()
     spec.body.type = 'raw'
     spec.body.raw = 'a\nb'
-    expect(generateCurl(spec)).toBe("curl 'https://api.example.com/x' \\\n  --data-binary 'a\nb'")
+    // GET + body 必须显式 `-X GET`：实测 curl 见到 -d/--data* 就自己发 POST，
+    // 少了这个 flag，"GET 带 body" 的意图会静默变成 POST。
+    expect(generateCurl(spec)).toBe("curl 'https://api.example.com/x' \\\n  -X GET \\\n  --data-binary 'a\nb'")
   })
 
   it('Windows：双引号包裹，内部双引号转义，单引号无需处理', () => {
