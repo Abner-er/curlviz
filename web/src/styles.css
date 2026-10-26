@@ -474,6 +474,22 @@ button.caret {
   font-size: 0.8rem;
 }
 
+.search-row {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.search-row input {
+  min-height: 1.9rem;
+  font-size: 0.84rem;
+}
+
+.search-row .muted {
+  white-space: nowrap;
+}
+
 .tag-mini {
   font-size: 0.7rem;
   color: #04121f;
@@ -568,4 +584,32 @@ label.inline-check,
   border-radius: 0.3rem;
   width: 230px;
   height: 230px;
+}
+
+/* ---------------- 键盘可达性 ---------------- */
+
+/* 未选中的页签面板靠 hidden 收着。这里写死 display:none，
+   免得以后给哪个容器补一条 display 规则，就把"空面板壳"顶出来占位置 */
+[hidden] {
+  display: none !important;
+}
+
+/* 页签之间用方向键走，焦点圈必须看得见：看不见落在哪一颗，左键就变成盲按。
+   只给 :focus-visible，鼠标点按时不描边 */
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* 弹窗容器打开时焦点先落它身上（好让读屏当场念出标题），但它不该有一圈描边：
+   套住整块的边框会让人以为全部内容被选中了 */
+.modal:focus,
+.modal:focus-visible {
+  outline: none;
+}
+
+/* 左栏是 sticky + 自身滚动：焦点走到看不见的地方时要留出身位，
+   否则滚过去的部分正好贴在栏顶被"资料库"那条吸顶工具栏盖住 */
+.shell-lib :focus-visible {
+  scroll-margin-top: 3.2rem;
 }

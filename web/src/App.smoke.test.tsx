@@ -84,10 +84,43 @@ describe('三栏 shell', () => {
     const html = renderToString(<App />)
     // 只截页签那一小段来判：整页里"变量"这两个字还会出现（环境表格的列名），
     // 那是对的，不能被这条断言误伤
-    const nav = /<nav class="tabs">.*?<\/nav>/.exec(html)?.[0] ?? ''
+    const nav = /<nav class="tabs"[^>]*>[\s\S]*?<\/nav>/.exec(html)?.[0] ?? ''
     expect(nav).toContain('Query')
     expect(nav).toContain('选项')
     expect(nav).not.toContain('变量')
     expect(nav.match(/<button/g)?.length).toBe(5)
+  })
+})
+
+/**
+ * 页签的键盘可达性。
+ *
+ * 首屏 SSR 验得出"结构对不对"，验不出"按下方向键焦点去哪"（那归 lib/tabs 与 lib/focus 的算术测试）。
+ * 这里钉的是最容易悄悄退化、又最难在人工点验里发现的一层：role 关系与 tabindex 分配。
+ */
+describe('页签的键盘可达性', () => {
+  it('五个页签是一组 tablist，选中态只有一个', () => {
+    const html = renderToString(<App />)
+    expect(html).toContain('role="tablist"')
+    expect(html.match(/role="tab"/g)?.length).toBe(5)
+    expect(html.match(/aria-selected="true"/g)?.length).toBe(1)
+    expect(html.match(/aria-selected="false"/g)?.length).toBe(4)
+  })
+
+  it('只有当前页签留在 Tab 顺序里（roving tabindex），其余交给方向键', () => {
+    const nav = /<nav class="tabs"[^>]*>[\s\S]*?<\/nav>/.exec(renderToString(<App />))?.[0] ?? ''
+    expect(nav.match(/tabindex="0"/g)?.length).toBe(1)
+    expect(nav.match(/tabindex="-1"/g)?.length).toBe(4)
+  })
+
+  it('五个面板壳都在 DOM 上：aria-controls 指着的 id 不能只在选中时才存在', () => {
+    const html = renderToString(<App />)
+    expect(html.match(/role="tabpanel"/g)?.length).toBe(5)
+    // 未选中的四个靠 hidden 收着，不是不渲染 —— 不渲染就成了悬空引用
+    expect(html.match(/<div role="tabpanel"[^>]*hidden/g)?.length).toBe(4)
+    for (const which of ['query', 'headers', 'body', 'auth', 'options']) {
+      expect(html).toContain(`aria-controls="panel-${which}"`)
+      expect(html).toContain(`id="panel-${which}"`)
+    }
   })
 })

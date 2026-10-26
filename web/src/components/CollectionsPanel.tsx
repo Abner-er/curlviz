@@ -8,6 +8,7 @@ import {
   renameCollection,
   requestCount,
   saveRequest,
+  searchLibrary,
   moveRequest,
   toCollectionFile,
   type CollectionState,
@@ -62,6 +63,15 @@ export function CollectionsPanel({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [saveTarget, setSaveTarget] = useState<string>('')
+  /**
+   * 搜索词。集合库用上以后真正的痛点不是"没有"而是"找不到"：
+   * 几十个集合几百条请求时，靠眼睛翻是不现实的，而翻不到就等于没存。
+   */
+  const [query, setQuery] = useState('')
+
+  const matches = useMemo(() => searchLibrary(state, query), [state, query])
+  const searching = query.trim() !== ''
+  const hitRequests = matches.reduce((n, m) => n + m.requests.length, 0)
 
   const targetId = useMemo(() => {
     if (saveTarget && state.collections.some((c) => c.id === saveTarget)) return saveTarget
@@ -111,6 +121,39 @@ export function CollectionsPanel({
       {state.collections.length === 0 && (
         <p className="muted">
           还没有存过请求。调通一条以后点「存入当前集合」就能反复用；换环境只改下面「环境 · 变量」那一块，命令不用动。
+        </p>
+      )}
+
+      {state.collections.length > 0 && (
+        <div className="search-row">
+          <input
+            className="grow"
+            value={query}
+            placeholder="搜集合名 / 请求名 / URL / 方法 / 头名 / 参数名"
+            aria-label="搜索集合库"
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setQuery('')
+            }}
+          />
+          {searching && (
+            <button className="mini" onClick={() => setQuery('')} title="清空搜索">
+              清空
+            </button>
+          )}
+          {searching && (
+            <span className="muted">
+              命中 {matches.length} 个集合 / {hitRequests} 条请求
+            </span>
+          )}
+        </div>
+      )}
+
+      {searching && matches.length === 0 && (
+        <p className="muted">
+          没搜到「{query.trim()}」。这里搜的是集合名、请求名、URL、方法，以及启用着的头名与参数名 ——
+          <strong>不搜值</strong>：值里多是凭据与环境数据，列出来既不是你找的东西，也会把 token 半截摊在屏幕上。
+          记着值但不记着名字时，去右侧「历史」里翻。
         </p>
       )}
 
@@ -185,8 +228,10 @@ export function CollectionsPanel({
         )}
       </div>
 
-      {state.collections.map((col) => {
-        const open = !collapsed.has(col.id)
+      {matches.map((hit) => {
+        const col = hit.collection
+        // 搜索时强制展开：结果里的集合还收着，用户看不见命中了哪几条，会以为等于没搜到。
+        const open = searching || !collapsed.has(col.id)
         return (
           <div key={col.id} className="col-block">
             <div className="col-head">
@@ -224,7 +269,11 @@ export function CollectionsPanel({
               ) : (
                 <>
                   <strong>{col.name}</strong>
-                  <span className="muted">{col.requests.length} 条</span>
+                  <span className="muted">
+                    {hit.requests.length === col.requests.length
+                      ? `${col.requests.length} 条`
+                      : `命中 ${hit.requests.length} / ${col.requests.length} 条`}
+                  </span>
                   <div className="grow" />
                   <button
                     className="mini"
@@ -262,8 +311,8 @@ export function CollectionsPanel({
 
             {open && (
               <ul className="history">
-                {col.requests.length === 0 && <li className="muted">空集合。</li>}
-                {col.requests.map((req) => (
+                {hit.requests.length === 0 && <li className="muted">空集合。</li>}
+                {hit.requests.map((req) => (
                   <RequestRow
                     key={req.id}
                     req={req}

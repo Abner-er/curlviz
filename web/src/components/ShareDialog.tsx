@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { buildCollection, normalizeSpec, redactSpec, type CurlSpec, type Environment } from '@curlviz/core'
 import type { ShareTarget } from './CollectionsPanel'
 import { createPayload, encodeShare, buildShareUrl, shareSizeHint, QR_MAX_BYTES, type SharePayload } from '../lib/share'
+import { cycleIndex, FOCUSABLE_SELECTOR } from '../lib/focus'
 import { copyText } from '../lib/clipboard'
 import { downloadBytes, downloadText, safeFileName } from '../lib/file'
 
@@ -101,12 +104,64 @@ export function ShareDialog({ target, environments, defaultRedact, onClose, onNo
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  const dialogRef = useRef<HTMLDivElement>(null)
+
+  /**
+   * 焦点进出这个弹窗。
+   *
+   * 打开时不接管焦点的话，键盘与读屏用户还停在背景里那颗「分享」上，Tab 一下就走回页面；
+   * 关闭时必须交还给唤起它的那个元素 —— 不交还就掉回文档开头，
+   * 想接着操作得从头 Tab 几十下，这条路径上没人会认为自己用的是个能用的界面。
+   *
+   * 背景同时设 inert，让弹窗外的东西既点不到也 Tab 不到，读屏也不会念到外面。
+   * 老浏览器不认 inert 时退化成只靠下面的 Tab 圈定 —— 焦点照样出不去，
+   * 只是背景还能点、还能被读屏念到；这个退化不影响把分享链接拿到手，就不为它加更多代码。
+   */
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const root = document.getElementById('root')
+    const supportsInert = 'inert' in HTMLElement.prototype
+    if (supportsInert) root?.setAttribute('inert', '')
+    dialogRef.current?.focus()
+    return () => {
+      if (supportsInert) root?.removeAttribute('inert')
+      if (opener !== null && document.contains(opener)) opener.focus()
+    }
+  }, [])
+
+  /** 把 Tab 圈在弹窗里：列表算术在 lib/focus 里测过，这里只做 DOM 那半边。 */
+  const trapTab = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (e.key !== 'Tab' || dialogRef.current === null) return
+    const items = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+      // disabled 与看不见的人都拿不到焦点：把他们算进序列会让 Tab 从 trap 里漏出去
+      (el) => !el.hasAttribute('disabled') && el.getClientRects().length > 0
+    )
+    const at = items.indexOf(document.activeElement as HTMLElement)
+    const next = cycleIndex(items.length, at, e.shiftKey ? -1 : 1)
+    if (next < 0) return
+    e.preventDefault()
+    items[next]?.focus()
+  }
+
   const url = useMemo(() => (shareText === '' ? '' : buildShareUrl(shareText)), [shareText])
   const size = shareText === '' ? null : shareSizeHint(shareText)
 
-  return (
+  // 挂到 body：要 inert 的是 #root（整个应用），弹窗自己不能也在里面。
+  // backdrop 本来就是 position:fixed 铺满视口，换个宿主看不出视觉差别
+  return createPortal(
     <div className="backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="分享">
+      <div
+        className="modal"
+        ref={dialogRef}
+        // tabIndex={-1} 让容器能被 focus() 拿走却不进 Tab 顺序：打开时焦点先落在这儿，
+        // 读屏才会当场念出这个 dialog 的标题，而不是等用户按下第一下 Tab 才知道弹窗开了
+        tabIndex={-1}
+        onKeyDown={trapTab}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="分享"
+      >
         <h2>
           分享「{target.label}」
           <span className="muted">（{isCollection ? '整个集合' : '单个请求'}）</span>
@@ -206,6 +261,7 @@ export function ShareDialog({ target, environments, defaultRedact, onClose, onNo
           <span className="muted">链接走 #share=，不会进服务端访问日志，也不会被 referer 带出去。</span>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

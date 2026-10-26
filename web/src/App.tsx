@@ -7,6 +7,7 @@ import { boundEntryOf, type CollectionState, type OpenRef } from './lib/collecti
 import { applySharePayload, loadBootState } from './lib/bootstrap'
 import { entryForEditor } from './lib/history'
 import { importCurlText } from './lib/imports'
+import { shiftTab } from './lib/tabs'
 import { usePersistence } from './hooks/usePersistence'
 import { useWorkbench } from './hooks/useWorkbench'
 import { useSend } from './hooks/useSend'
@@ -145,6 +146,47 @@ export function App() {
     { value: 'auth', label: 'Auth', badge: wb.spec.auth.type === 'none' ? 0 : 1 },
     { value: 'options', label: '选项', badge: wb.spec.rawArgs.length }
   ]
+
+  /**
+   * 某个页签对应的编辑内容。
+   *
+   * 从 JSX 里挪出来成函数，是因为下面要把五个面板壳一起渲染：每颗页签的 aria-controls
+   * 都指着一个 id，被指着的 id 必须一直在 DOM 里存在，未选中的那个壳就空着。
+   */
+  const panelFor = (which: Tab) => {
+    if (which === 'query') {
+      return (
+        <KeyValueTable
+          rows={wb.spec.query}
+          onChange={(rows) => wb.patch({ query: rows })}
+          keyPlaceholder="参数名"
+          valuePlaceholder="值"
+          pairLabel="参数 / 值"
+        />
+      )
+    }
+    if (which === 'headers') {
+      return (
+        <KeyValueTable
+          rows={wb.spec.headers}
+          onChange={(rows) => wb.patch({ headers: rows })}
+          keyPlaceholder="Header-Name"
+          valuePlaceholder="值（留空输出 K: 表示发空头）"
+          pairLabel="头 / 值"
+        />
+      )
+    }
+    if (which === 'body') return <BodyEditor spec={wb.spec} onChange={wb.patch} />
+    if (which === 'auth') return <AuthEditor auth={wb.spec.auth} onChange={(a) => wb.patch({ auth: a })} />
+    return (
+      <OptionsEditor
+        options={wb.spec.options}
+        rawArgs={wb.spec.rawArgs}
+        onChange={(o) => wb.patch({ options: o })}
+        onDropRawArg={(i) => wb.patch({ rawArgs: wb.spec.rawArgs.filter((_, k) => k !== i) })}
+      />
+    )
+  }
 
   return (
     <>
@@ -321,43 +363,53 @@ export function App() {
           {importOpen && <ImportPanel onSubmit={onImport} onClose={() => setImportOpen(false)} />}
 
           <section className="card">
-            <nav className="tabs">
+            <nav
+              className="tabs"
+              role="tablist"
+              aria-label="请求编辑器分区"
+              onKeyDown={(e) => {
+                const values = tabs.map((t) => t.value)
+                let next: Tab
+                if (e.key === 'ArrowRight') next = shiftTab(values, tab, 1)
+                else if (e.key === 'ArrowLeft') next = shiftTab(values, tab, -1)
+                else if (e.key === 'Home') next = values[0] ?? tab
+                else if (e.key === 'End') next = values[values.length - 1] ?? tab
+                else return
+                e.preventDefault()
+                // 页签之间用方向键走，所以只有选中那颗留在 Tab 顺序里（roving tabindex）。
+                // 换完页签必须把焦点也挪过去：焦点留在原来那颗上时它已经变成 tabIndex=-1，
+                // 再按 Tab 会从中间跳出去，读屏报的页签名也和面板对不上。
+                setTab(next)
+                document.getElementById(`tab-${next}`)?.focus()
+              }}
+            >
               {tabs.map((t) => (
-                <button key={t.value} aria-selected={tab === t.value} onClick={() => setTab(t.value)}>
+                <button
+                  key={t.value}
+                  id={`tab-${t.value}`}
+                  role="tab"
+                  aria-selected={tab === t.value}
+                  aria-controls={`panel-${t.value}`}
+                  tabIndex={tab === t.value ? 0 : -1}
+                  onClick={() => setTab(t.value)}
+                >
                   {t.label}
                   {t.badge ? ` (${t.badge})` : ''}
                 </button>
               ))}
             </nav>
 
-            {tab === 'query' && (
-              <KeyValueTable
-                rows={wb.spec.query}
-                onChange={(rows) => wb.patch({ query: rows })}
-                keyPlaceholder="参数名"
-                valuePlaceholder="值"
-                pairLabel="参数 / 值"
-              />
-            )}
-            {tab === 'headers' && (
-              <KeyValueTable
-                rows={wb.spec.headers}
-                onChange={(rows) => wb.patch({ headers: rows })}
-                keyPlaceholder="Header-Name"
-                valuePlaceholder="值（留空输出 K: 表示发空头）"
-                pairLabel="头 / 值"
-              />
-            )}
-            {tab === 'body' && <BodyEditor spec={wb.spec} onChange={wb.patch} />}
-            {tab === 'auth' && <AuthEditor auth={wb.spec.auth} onChange={(a) => wb.patch({ auth: a })} />}
-            {tab === 'options' && (
-              <OptionsEditor
-                options={wb.spec.options}
-                rawArgs={wb.spec.rawArgs}
-                onChange={(o) => wb.patch({ options: o })}
-                onDropRawArg={(i) => wb.patch({ rawArgs: wb.spec.rawArgs.filter((_, k) => k !== i) })}
-              />
-            )}
+            {tabs.map((t) => (
+              <div
+                key={t.value}
+                role="tabpanel"
+                id={`panel-${t.value}`}
+                aria-labelledby={`tab-${t.value}`}
+                hidden={tab !== t.value}
+              >
+                {tab === t.value ? panelFor(t.value) : null}
+              </div>
+            ))}
           </section>
 
           {/* curl 预览紧跟编辑器：改一个参数要立刻看到命令怎么变，
