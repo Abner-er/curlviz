@@ -1,6 +1,6 @@
-# VisualCurl 方案定稿 v1
+# CurlViz 方案定稿 v1
 
-> 工作名 **CurlStudio**（可改，不影响结构）。一句话定位：**面向运维的可视化 curl 工具——curl 与表单双向互转，网页 PWA + 安卓 APK 双端，免登录、不过云、数据全本地。**
+> **CurlViz**（中文名：**curl 可视化**，2026-10-26 定名；npm 包名 `@curlviz/core`）。一句话定位：**面向运维的可视化 curl 工具——curl 与表单双向互转，网页 PWA + 安卓 APK 双端，免登录、不过云、数据全本地。**
 
 ## 1. 已确认决策（2026-10-25）
 
@@ -22,7 +22,7 @@ G:/AI_LLM/Curl/
 ├── spec/
 │   └── fixtures/*.json    # 契约测试用例，TS/Kotlin 两端共用
 ├── packages/
-│   └── core-ts/           # TS：curl 解析/生成 + 变量替换 + 契约测试
+│   └── core-ts/           # TS：curl 解析/生成 + 变量替换 + 契约测试（npm 名 @curlviz/core）
 ├── web/                   # Vite + React 18 + TS，PWA
 ├── android/               # Kotlin + Compose（minSdk 24）
 └── agent/                 # Node 单文件本地执行代理（M4）
@@ -66,13 +66,13 @@ G:/AI_LLM/Curl/
 - `multipart[]`：`{ key, kind: "text|file", value, filename, contentType, enabled }`
 - `rawArgs`：解析时无法识别的 curl 参数原样保留，生成时原样输出——**逃生通道，保证往返不丢数据**
 - 变量语法：`{{name}}`，作用于 url/headers/body/auth 的全部字符串值；未解析的变量发送前高亮提示
-- 集合文件格式：`{ format: "curlstudio-collection", version: 1, environments: [...], requests: [...] }`
+- 集合文件格式：`{ format: "curlviz-collection", version: 1, environments: [...], requests: [...] }`
 
 ### curl 生成规则（表单 → 命令）
 
 | CurlSpec 字段 | 输出 |
 |---|---|
-| method ≠ GET | `-X METHOD` |
+| method ≠ GET | `-X METHOD`（HEAD 走 `-I`，见 §8） |
 | headers[] | `-H 'K: V'`，单引号包裹，值内 `'` 转义为 `'\''` |
 | query[] | percent-encode 后拼入 URL |
 | body=json | `--data-raw '...'`，未显式设置时自动补 `Content-Type: application/json` |
@@ -88,7 +88,7 @@ G:/AI_LLM/Curl/
 | proxy | `-x '...'` |
 | compressed | `--compressed` |
 
-默认多行输出（行尾 ` \` 续行，两空格缩升），可在设置里切单行。复制到终端可直接运行。
+默认多行输出（行尾 ` \` 续行，两空格缩进），可在设置里切单行。复制到终端可直接运行。
 
 ### curl 解析规则（命令 → 表单）
 
@@ -126,7 +126,22 @@ G:/AI_LLM/Curl/
 
 ## 7. 待定项（不阻塞开工）
 
-- 名字：工作名 CurlStudio，随时可换
+- ~~名字~~ ✅ 已定：**CurlViz**（中文：curl 可视化），2026-10-26
 - 网页托管：v1 本地构建 + PWA，托管（CF Pages / GH Pages）M2 后评估
 - agent 分发：先 `npx` 一行启动，后期打包单文件 exe
 - 安卓 minSdk：暂定 24（Android 7.0，覆盖率约 95%+）
+
+## 8. 实现期勘误（M0，2026-10-26）
+
+写代码时发现 v1 的三处规定会导致**往返丢数据或命令跑不通**，已按下面的方式实现。
+§4 的生成规则表以本节为准，逐条理由与字段语义写在 `spec/README.md` §9。
+
+| # | 原表规定 | 实际实现 | 为什么要改 |
+|---|---|---|---|
+| 1 | `timeoutMs → --connect-timeout N` | `timeoutMs → -m`（总时限），**新增** `connectTimeoutMs → --connect-timeout` | curl 的两个 flag 语义不同：`-m` 管整条请求，`--connect-timeout` 只管建连。挤进同一个字段后，`curl -m 30` 导入会被生成成 `--connect-timeout 30`，建连成功后就再没有总时限——直接违反本文件"往返不丢数据"的硬约束 |
+| 2 | 引号只有一套：`'` 包裹、值内 `'` 转成 `'\''` | 生成侧加 `quoteStyle: 'posix' \| 'windows'` | `'\''` 是 shell 语法，cmd.exe 不认。本机 curl 8.19.0 实测收到字面量 `''\''quick\'''`，POSIX 风格粘进 cmd 就是坏命令。Windows 必须能切 `"…"` + `\"` 那套 |
+| 3 | `method ≠ GET → -X METHOD`（HEAD 也走这条） | HEAD 输出 `-I`；`-X HEAD` 导入时**被规范成 `-I`** | `-X HEAD` 只改请求行的方法名，curl 仍照 GET 的预期等一个永远不会来的响应体，命令看着像卡死（社区公认的坑）。`-I` 才是"HEAD 且不等 body"。`CurlSpec.method` 表达不了"等不等 body"这个区别，两端统一取不卡死的写法 |
+
+第 3 条带来的连带规定：`-I` 与 `-X` 同时出现时（`curl -I url -X GET`），方法按 `-X` 取，
+落选的 `-I` **不丢弃**，原样进 `rawArgs` 并给 `flag-conflict` 告警——否则重新生成只剩裸 `-I`，
+方法会从 GET 悄悄翻回 HEAD。
