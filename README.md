@@ -49,9 +49,10 @@ npm run build && npm run preview --workspace @curlviz/web   # 看成品用，htt
 
 | 阶段 | 状态 |
 |---|---|
-| M0 契约 + 内核 | ✅ 59 条 fixture、290 个测试全绿，严格 TS 无错 |
+| M0 契约 + 内核 | ✅ 79 条 fixture（47 条走完整往返）、core 350 个测试全绿，严格 TS 无错 |
 | M1 Web MVP | ✅ 导入/表单/双向转换/发送/响应预览/本地持久化，含首屏冒烟；`vite build` 通过 |
-| M2 Web 增强（集合/环境/历史/导入导出/分享） | ✅ 代码与测试完成（web 153 + core 290，typecheck 干净，产物已实测可访问）；剩下浏览器里的人工验收 |
+| M2 Web 增强（集合/环境/历史/导入导出/分享） | ✅ 代码与测试完成（本轮实测 web 240 + core 350，typecheck 干净，产物已实测可访问）；剩下浏览器里的人工验收 |
+| M2.7 拿真实 curl 当裁判 | ✅ 45 条命令逐字节对拍 + 20 条书中命令进契约 + 4 处按实测改写；差异登记在 `spec/README.md` §10.1 |
 | M3 安卓 MVP | 未开始 |
 | M4 双端互通 + 本地 agent | 未开始 |
 
@@ -77,7 +78,31 @@ npm run build && npm run preview --workspace @curlviz/web   # 看成品用，htt
 3. **完整备份默认不脱敏**：脱敏过的备份没法拿来恢复自己的密码，等于废文件；
    所以它按明文导出并在界面上写明"里面有明文 token / 密码，请按密码对待这个文件"。要共享就勾脱敏。
 4. M2 的界面（集合面板、环境面板、分享弹窗、拖拽导入）**还没在真浏览器里人工点过**——
-   这个开发环境没有浏览器自动化。逻辑层有 153 条测试兜着，视觉与交互还需你自己开 `npm run dev` 过一遍。
+   这个开发环境没有浏览器自动化。逻辑层有 240 条测试兜着（本轮测得），视觉与交互还需你自己开 `npm run dev` 过一遍。
+
+## M2.7 做了什么：拿真实 curl 当裁判
+
+"解析器和生成器互相印证"只证明自洽，证明不了跟 curl 一样。这一轮把裁判换成 curl 本身。
+
+- **对拍套件** `packages/core-ts/test/roundtrip.live.test.ts`：进程内起两个靶（8080 回显 / 8081 重定向），
+  45 条命令打上去，抓**请求行 + 全部响应头 + body** 逐行比字节。每条三份读数：bash 里跑原命令 = 唯一基线，
+  posix 列 = 重新生成的命令再跑，cmd 列 = cmd.exe 里跑 windows 引号版；差异表 `KNOWN` 按**列**登记，
+  同一用例不许拿一个理由同时放过两列。`npm test` 默认不跑它（要起服务、秒级耗时），
+  `CURLVIZ_LIVE=1 npx vitest run --root packages/core-ts` 才跑，报告落 `_wip/roundtrip-report.md`。
+  本轮读数：40 条两列全同、3 条两列都已登记差异、2 条仅 cmd 列已登记差异，未登记差异 0 条。
+- **四处按实测改写**（都是先跑出读数、再改代码，不是反过来）：多个 `-b` 合成一个 Cookie 头且连接符是 `"; "`
+  （旧实现逗号拼接，线上 `a=1,b=2` 是非法形状，服务端直接不认）；同名 `-H` 不合并（实测就是发两行）；
+  新增 `methodExplicit`，隐式 POST 不再补 `-X POST`（`-d … -L` 在 301 后降成 GET，补了 `-X` 就一路 POST）；
+  `--url-query` 真的解析进 `query[]` 并打标记，生成时不折进 URL（curl 那张编码表跟 `encodeURIComponent` 不是一份）。
+- **契约扩充**：从《学习 curl》挑 20 条命令进 `spec/fixtures/book-curl.json`，期望值全部取自实测输出；
+  fixture 总数 79 条、其中 47 条走完整往返。安卓端（M3）照这份契约实现，读的就是这些文件。
+- **推翻并改掉一句文档错话**：`spec/README.md` §4.4 原来写"`-H 'K:'` 是发空值头，不是删头"——实测是**删头**，
+  而且连 curl 自带的 `Accept` / `User-Agent` 都删得掉；`-H 'K;'` 才是发一行空值。文档改对之后，
+  接着让代码配得上这句话：网页发送新增三条如实提示（删头做不到、`rawArgs` 不执行、`--url-query` 编码表不同），
+  表格里给 `--url-query` 来的项和值为空的头各加一枚语义胶囊。
+- **一条仍知的缺陷，登记不藏**：`rawArgs` 存的是 bash 引号原文，切到 windows 风格时原样吐出单引号，
+  cmd.exe 不认 → `--json '{"a":null}'`、`-H 'foo;'` 的值会漏。干净修法是把 `rawArgs` 结构化，那是契约 v2、
+  要动 Kotlin 端和所有已存集合文件，所以先登记在 `spec/README.md` §10.1 第 1 行。
 
 ## M1 在浏览器里做不到的事（不是 bug，是 fetch 的语义边界）
 
@@ -87,6 +112,8 @@ npm run build && npm run preview --workspace @curlviz/web   # 看成品用，htt
 | curl 能力 | 浏览器里的实情 | 兜底 |
 |---|---|---|
 | `-H 'Cookie: …'`、`Host`、`Origin`、`Referer`、`Content-Length` 等 | Fetch 标准里的 forbidden header，**会被浏览器悄悄丢掉**，脚本设了也不发 | 复制到终端 |
+| `-H 'K:'`（curl 里是**删掉这个头**，实测连自带的 `Accept` / `User-Agent` 都删得掉） | fetch 没有"删头"这个操作：自定义头会带着空值发出去，forbidden 头是整个忽略——两种都不是"不发这行" | 复制到终端 |
+| `--url-query 'k=v'` 由 curl 自己编码（实测空格 → `+`、`!` → `%21`） | 浏览器发送只能把它折进 URL，编码用 `encodeURIComponent`（空格 → `%20`），两份字节可以不同 | 复制到终端仍逐条写 `--url-query` |
 | 跨域读全部响应头 | CORS 只暴露 6 个安全头，其余读不到；界面会标「(受限)」 | F12 看原始响应 |
 | `-k` 跳过证书校验 | 不可关。内网自签证书必须先让系统信任 | 系统信任链 / agent |
 | `-x` 指定代理 | fetch 不能指定代理，只能跟随系统设置 | 系统代理 / agent |

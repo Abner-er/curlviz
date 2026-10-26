@@ -64,17 +64,26 @@ G:/AI_LLM/Curl/
 
 - `body.type`：`none | json | form | multipart | raw`
 - `multipart[]`：`{ key, kind: "text|file", value, filename, contentType, enabled }`
+- `methodExplicit?`（M2.7 新增）：用户命令里是否**真写了** `-X`。隐式 POST（只有 `-d`）不许补 `-X POST`——
+  实测 `-d … -L` 在 301 后降成 GET，`-X POST -d … -L` 却一路保持 POST，补上等于偷换请求语义。
+  HEAD 是唯一把显式性丢掉的 case（`-X HEAD` 会死等响应体，生成侧永远输出 `-I`），留着会让往返第二次翻不上去。
+- `query[].viaUrlQuery?`（M2.7 新增）：这一项来自 `--url-query`。生成时**仍逐条输出** `--url-query 'k=v'`、
+  不折进 URL——curl 自己那张编码表跟 `encodeURIComponent` 不是一份（实测空格 → `+`、`!` → `%21`、`~` 原样）。
 - `rawArgs`：解析时无法识别的 curl 参数原样保留，生成时原样输出——**逃生通道，保证往返不丢数据**
 - 变量语法：`{{name}}`，作用于 url/headers/body/auth 的全部字符串值；未解析的变量发送前高亮提示
 - 集合文件格式：`{ format: "curlviz-collection", version: 1, environments: [...], requests: [...] }`
+
+下面两张表是**摘要**。逐条规则、实测依据、以及"跟 curl 已登记的差异"以
+`spec/README.md` §4（生成）/ §5（解析）/ §10.1（差异登记）为准——M0 之后这两处已经漂过一回，
+别再拿这里当细节源。
 
 ### curl 生成规则（表单 → 命令）
 
 | CurlSpec 字段 | 输出 |
 |---|---|
-| method ≠ GET | `-X METHOD`（HEAD 走 `-I`，见 §8） |
-| headers[] | `-H 'K: V'`，单引号包裹，值内 `'` 转义为 `'\''` |
-| query[] | percent-encode 后拼入 URL |
+| method | HEAD → `-I`；其余看 `methodExplicit`：真写了 `-X`、或 curl 自己猜不出这方法时才输出 `-X METHOD`（隐式 POST **不补**，见 §8 与 `spec/README.md` §4.1） |
+| headers[] | `-H 'K: V'`，单引号包裹，值内 `'` 转义为 `'\''`；值为空串输出 `-H 'K:'`（curl 里那是**删掉这个头**，实测）；同名不合并，线路上就是发两行 |
+| query[] | percent-encode 后拼入 URL；`viaUrlQuery=true` 的行例外，输出 `--url-query 'k=v'` |
 | body=json | `--data-raw '...'`，未显式设置时自动补 `Content-Type: application/json` |
 | body=form | `-d 'k=v&k2=v2'` |
 | body=multipart | `-F 'k=v'` / `-F 'k=@path;type=...'` |
@@ -83,7 +92,8 @@ G:/AI_LLM/Curl/
 | auth=bearer | `-H 'Authorization: Bearer tok'` |
 | followRedirects | `-L` |
 | insecure | `-k` |
-| timeoutMs | `--connect-timeout N` |
+| timeoutMs | `-m N`（总时限）；`--connect-timeout` 走 `options.connectTimeoutMs`，见 §8 勘误 1 |
+| `-b` / cookie | 多个 `-b` 合成**一个** `-H 'Cookie: a=1; b=2'`，连接符是 `"; "`（实测 curl 就是这么发的），并按第一条 `-b` 的位置插入 |
 | userAgent | `-A '...'` |
 | proxy | `-x '...'` |
 | compressed | `--compressed` |
@@ -93,7 +103,11 @@ G:/AI_LLM/Curl/
 ### curl 解析规则（命令 → 表单）
 
 - 先过 bash 风格分词器：处理单/双引号、`\` 转义、跨行续行、`#` 注释
-- 覆盖 flag：`-X/--request`、`-H/--header`、`-d/--data/--data-raw/--data-binary/--data-urlencode`、`-F/--form`、`-G/--get`（把 data 转 query）、`-u/--user`、`-A/--user-agent`、`-b/--cookie`、`-e/--referer`、`-L/--location`、`-k/--insecure`、`--connect-timeout`、`-m/--max-time`、`-x/--proxy`、`-I/--head`、`--compressed`
+- 覆盖 flag（以 `parse.ts` 的 `MAPPED` 表为准）：`-X/--request`、`-H/--header`、
+  `-d/--data/--data-ascii/--data-raw/--data-binary/--data-urlencode`、**`--url-query`**（M2.7 新增）、
+  `-F/--form/--form-string`、`-G/--get`（把 data 转 query）、`-u/--user`、`-A/--user-agent`、`-b/--cookie`、
+  `-e/--referer`、`-L/--location/--no-location/--location-trusted`、`-k/--insecure`、`--compressed`、
+  `-I/--head`、`--connect-timeout`、`-m/--max-time`、`-x/--proxy`、`--url`
 - URL 自带 query 与 `-d`（配合 `-G`）合并进 `query[]`
 - 识别 `$VAR` / 反引号命令替换：警告"含 shell 变量，解析结果不保证等价"，原文进 `rawArgs`
 - 无法映射的 flag：进 `rawArgs`，不丢
@@ -237,3 +251,47 @@ preview(4173) 与 dev(5183) 的 index、两个资源、lazy chunk 与本轮每�
 **还没验的**：抽屉 34rem 这个宽度、吸顶栏约 5rem 与 `scroll-margin-top: 6rem` 的余量都是按字号推的，
 **没在真浏览器里量过**；焦点走向（Tab 圈在抽屉内、关弹窗焦点回原按钮、叠两层按一次 Esc）
 node 环境测不出来。dev 已起在 `http://localhost:5183/` 等人工点一遍。
+
+## 12. 拿真实 curl 当裁判（M2.7，2026-10-27）
+
+起因是三条待办挂了很久：**真实 curl 二进制往返对拍（posix vs cmd）**。自洽测试只能证明
+"解析器和生成器互相没骗"，证明不了跟 curl 一致——结果这一轮跑出来的四处错，全部在自洽测试
+**全绿**的情况下躲过了 M0/M1/M2 三轮。判据从此定死：**"复制到终端能跑，跑出来的请求和粘进来时一样"
+才算对**，`spec/fixtures` 的期望值一律取自实测，不许凭记忆手写。
+
+| # | 这一轮定的事 | 细节 | 为什么 |
+|---|---|---|---|
+| 1 | 对拍套件成为默认之外的第二道门 | `packages/core-ts/test/roundtrip.live.test.ts`，`CURLVIZ_LIVE=1` 才跑；进程内起 8080 回显 / 8081 重定向两个靶，跑完即关；比的是**请求行 + 全部响应头 + body** 的逐行字节 | 它要起服务、耗时 11.19s，塞进 `npm test` 会把快测拖成慢测，反而没人跑 |
+| 2 | 每条用例三份读数，基线只有一条 | bash 跑原命令 = 基线；posix 列 = 生成命令再跑；windows 列 = cmd.exe 里跑 windows 引号版 | 两个 shell 的语义本来不同，混在一个"通过/失败"里就会拿 cmd 的理由放过 posix 的 bug |
+| 3 | 差异表 `KNOWN` **按列**登记 | `get-plus-data` / `url-query-eq-empty` 两列都差，`json-shorthand` / `header-semicolon` 只在 cmd 差，`cookie-anchor-order` 两列都只差头序 | 允许"一条理由覆盖两列"就等于允许把真 bug 记成环境差异 |
+| 4 | cmd 侧必须直传，不能走 `.cmd` 批处理 | `windowsVerbatimArguments: true` + `cmd /d /v:off /c`；`spawnSync` 会阻塞事件循环让靶子收不到请求，必须异步 | 批处理把 `-d "a=b%3Dc"` 的 `%3` 当位置参数吃掉，线上多出个 `D`；这个坑修好之后三条 data 用例自己转绿 |
+| 5 | 四处按实测改写内核 | 多个 `-b` 合成**一个** Cookie 头、连接符 `"; "`，并按第一条 `-b` 的位置插入；同名 `-H` **不合并**（`dedupeHeaders` 删除）；新增 `methodExplicit`，隐式 POST **不补** `-X POST`；`--url-query` 解析进 `query[]` 并打 `viaUrlQuery`，生成时不折进 URL | 旧 Cookie 发成 `a=1,b=2` 是非法头形状；补 `-X` 会把 `-L` 的 301 行为从"降 GET"改成"保持 POST"；curl 的编码表把空格编成 `+`、`!` 编成 `%21`，跟 `encodeURIComponent` 不是一张表 |
+| 6 | 书里的 20 条命令进契约，`canonical` 与 `parse-only` 分开标 | `spec/fixtures/book-curl.json`；canonical 的 `curl` 字段写的就是生成器那套多行规范形态（先倒进 `_wip/dump.json` 读输出，再抄） | 单行原写法永远对不上规范形态，硬凑 canonical 只会逼人把期望值改成实现——那正是这一轮要消灭的做法 |
+
+**一句文档错话被实测推翻**：`spec/README.md` §4.4 原来写着"`-H 'K:'` 的 curl 语义是发空值头，不是删头"。
+用 `net.createServer` 抓原始字节（`http.createServer` 会被 Node 的解析器提前吃掉请求块，抓不到）读数：
+`-H 'Accept:'` 之后线路上**连 curl 自带的 `Accept: */*` 都没有了**；`-H 'User-Agent:'` 删 UA；
+`-H 'Referer:'` 连 `-e` 给的 Referer 也删得掉；`-H 'X-Dup:' -H 'X-Dup: v'` 只发有值那一行；
+而 `-H 'Acme;'` 发的是 `Acme:` ——**分号形态才是"发一行空值"**，那种形态我们建模不了，原样留 `rawArgs`。
+改的顺序是先改文档、再让代码配得上文档：网页发送新增三条如实提示（删头做不到 / `rawArgs` 不执行 /
+`--url-query` 编码表不同），query 表给 `--url-query` 来的项加胶囊，headers 表给空值头加「删头」胶囊，
+headers 的 placeholder 从"留空 = 发空头"改成"留空 = `-H 'K:'`，curl 是删掉这个头"。
+判据放在 `lib/display.ts` 的纯函数里（`queryRowNote` / `headerRowNote`），组件只画结果——web 层一贯分工。
+
+**登记不修的五条差异**写进 `spec/README.md` §10.1（现象 / 为什么不立刻改 / 什么情况下必须改）：
+`rawArgs` 存 bash 引号原文导致 cmd 下值泄漏（要修得把 `rawArgs` 结构化，契约 v2）、
+`--url-query x` 与 `x=` 分不出来（同样 v2）、`-G` 时 curl 丢掉 `--url-query` 而我们不模仿、
+Cookie 头序主动换成"跟命令顺序"、fetch 路径天生表达不了删头与 curl 编码表。
+判断标准只有一条：**能被用户撞到的差异必须写下来，"看起来没差异"不是证据**。
+
+**本轮验证过的数字**（跑出来的，不是估的）：对拍 45 条 = 40 条两列全同 / 3 条两列均已登记 / 2 条仅 cmd 列已登记，
+未登记差异 0 条，耗时 11.19s；`npm run verify` 全绿 = core 350 passed + 1 skipped（7 文件，skip 的就是对拍）
++ web 240 passed（19 文件），两个 workspace `tsc --noEmit` 零错；fixture 79 条、其中 canonical 47 条；
+`npm run build` 通过（118 模块，`index-ScLe5wry.js` 263.54 kB / gzip 86.31、`index-CtuVLELi.css` 8.13 kB / gzip 2.40，
+二维码仍独立成 chunk `browser-CqDbEFy1.js` 25.84 kB）。
+
+**还没验的**：网页 `fetch` 路径本身没进自动化（vitest 是 node 环境、没有 jsdom），上面那三条提示是
+字符串层面的断言，浏览器里怎么摆、`-H 'K:'` 发出去到底长什么样，还得人工看一次——M2/M2.5/M2.6 三轮的
+界面验收一并挂在 dev 服务 `http://localhost:5183/` 上等点击。`methodExplicit` / `viaUrlQuery` 两个新字段
+目前只有 TS 端消费，Kotlin 端要等 M3 才能验"照文档就能实现"这句话；cmd 下 `rawArgs` 泄漏单引号是**已确认的
+真缺陷**，这一轮只留下了对拍证据，没给修法。

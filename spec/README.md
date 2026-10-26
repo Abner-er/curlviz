@@ -21,9 +21,19 @@
 | `fixtures/body.json` | json / form / multipart / raw 四形态与 `-G`、`--data-urlencode` 等变体 | 15 |
 | `fixtures/options-and-rawargs.json` | 开关映射、超时/代理/UA、无法映射的 flag 走 `rawArgs`、`-I` 与 `-X` 冲突、多重命令 | 14 |
 | `fixtures/tokenizer-edge.json` | 续行、注释、三套引号、转义、CRLF、未闭合引号 | 12 |
+| `fixtures/book-curl.json` | 取材《学习 curl》的 20 条：`-siX POST` 合并、`-G`/`--url-query`/`--data` 混用、多 `-b` 合成、`-H 'k;'`、`-r` 多段、`-T`、`--json`、`-w/-s/-o`、URL 内嵌凭据、花括号/方括号通配 | 20 |
 
-新增用例请放进对应文件；开新面（例如 `--upload-file` 的 `-T` 语义）才新建文件，并同步
-`contract.test.ts` 里那条"能读到 N 个 fixture 文件"的清单。
+合计 79 条，其中 `canonical: true` 47 条。期望值的来源分两批，说清楚免得后来人照着错的信：
+
+- `book-curl.json` 那 20 条**逐条抄自实测**：先把命令过一遍 `parseCurl` + `generateCurl` 倒进 `_wip/dump.json`
+  读规范形态，再用真实 curl 8.19.0 对拍确认线路语义，最后把跑出来的输出抄进 fixture，没有一条凭记忆手写。
+- 其余五个文件写于 M0，期望值当时是按实现加推理定的。本轮用 `packages/core-ts/test/roundtrip.live.test.ts`
+  （`CURLVIZ_LIVE=1` 可重跑）复核了其中的线路语义，**发现的四处分歧全部按 curl 改写**：多个 `-b` 用 `"; "`
+  合成一个 Cookie 头、同名 `-H` 不合并、隐式 POST 不补 `-X`、`--url-query` 独立成条（见 §4.1 / §4.4 / §5.2）。
+  对拍没覆盖到的那些条仍然只是"我们自己一致"，不等于 curl 认可——**动它们之前先补一条对拍用例**。
+
+新增用例优先放进已有文件；开新面才新建文件，并同步 `contract.test.ts` 里那三条绊线
+（用例总数、文件数、排序后的文件名清单）。
 
 ---
 
@@ -98,7 +108,8 @@ partial 比对，逐字段报路径（`body.form[1].value: 'x' ≠ 期望 'y'`�
 
 ```
 curl <URL>
-  [ -X METHOD | -I ]   方法非 GET 才输出；HEAD 输出 -I，其余输出 -X METHOD（大写）
+  [ -X METHOD | -I ]   见下面的"何时输出 -X"
+  [ --url-query ]      viaUrlQuery=true 的 query 项，按 query[] 原顺序
   [ 选项 ]             -L → -k → --compressed → -m → --connect-timeout → -A → -x
   [ headers ]          按 spec.headers 原顺序
   [ auth ]             basic → -u；bearer → -H 'Authorization: Bearer …'
@@ -106,6 +117,18 @@ curl <URL>
   [ body ]
   [ rawArgs ]          原样追加，顺序不变
 ```
+
+**何时输出 `-X`**（实测逼出来的规则，v1 那张"方法非 GET 就输出"的写法会把请求改掉）：
+
+- `method === 'HEAD'` → 输出 `-I`，永远不输出 `-X HEAD`。
+- 其余情况：`methodExplicit === true`（用户命令里真写了 `-X`）**或** curl 自己猜不出这个方法
+  （有 body 参数却不是 POST、没 body 参数却是 POST）时，输出 `-X METHOD`。
+- 隐式 POST（只有 `-d`/`-F` 没写 `-X`）**不补** `-X POST`：实测 `-d … -L` 在 301 之后降成 GET，
+  而 `-X POST -d … -L` 一路保持 POST。补上 `-X` 等于换了请求语义，这正是运维最在意的那类差异。
+
+`methodExplicit` 因此是契约字段：解析侧写它，生成侧读它，Kotlin 两端都必须带。
+HEAD 是唯一把显式性丢掉的情况——`-X HEAD` 进来会被规范成 `-I`，`methodExplicit` 落成 `false`，
+否则往返第二次会从 true 翻成 false，破 §3.3 的幂等契约。
 
 多行时缩进规则：`curl …` 那一行**永远顶格**，它后面的每一条参数行前两个空格；行尾带 ` \`，最后一行不带。
 `# 注释` 行永远不带续行符，也不缩进——即 `withNameComment` 打开时是「注释行顶格 + curl 行仍顶格 + 其余缩进」
@@ -141,8 +164,9 @@ curl 仍然**等一个永远不会来的响应体**，命令看起来卡死—�
 
 | CurlSpec | 输出 |
 |---|---|
-| `query[]` | percent-encode 后拼进 URL（`url` 已带 `?` 时用 `&` 续接）；`enabled=false` 或空 key 不输出 |
-| `headers[]` 值为空串 | `-H 'K:'`（curl 语义是发空值头，不是删头） |
+| `query[]`（`viaUrlQuery` 不为真） | percent-encode 后拼进 URL（`url` 已带 `?` 时用 `&` 续接）；`enabled=false` 或空 key 不输出 |
+| `query[]` 里 `viaUrlQuery=true` 的行 | 单独输出 `--url-query 'k=v'`（值为空串时只写 `--url-query 'k'`）。**不许折进 URL**：curl 自己那张编码表跟 `encodeURIComponent` 不是一份 —— 实测空格发成 `+`、`!` 发成 `%21`、`(`/`)`/`*` 发成 `%28`/`%29`/`%2A`、`~` 原样，而 `encodeURIComponent` 恰好反过来（空格 `%20`、`!~*'()` 原样）。交给 curl 去编码才是用户粘到终端上跑出来的那个请求 |
+| `headers[]` 值为空串 | `-H 'K:'`。**curl 的语义是"删掉这个头"**，不是发空值头（实测 `-H 'Accept:'` 连默认的 `Accept: */*` 一起不发、`-H 'User-Agent:'` 不发 UA、`-H 'Referer:'` 能把 `-e` 给的 Referer 也删掉）；同名再给一条真值时线路上只有真值那一行（`-H 'X-Dup:' -H 'X-Dup: v'` → 只发 `X-Dup: v`）。要"发一行空值头"得写 `-H 'K;'`，curl 8.19.0 实测发的是 `K:`；这种形态我们建模不了，连引号原样进 `rawArgs`（见 fixture `book-header-semicolon-line`） |
 | `body=form` | `-d 'k=v&k2=v2'`，逐项 percent-encode |
 | `body=raw` | `--data-binary '…'` |
 | `options.timeoutMs` | `-m <秒>`（总时限）；`0` 不输出 |
@@ -162,7 +186,7 @@ curl 仍然**等一个永远不会来的响应体**，命令看起来卡死—�
 - 词首 `#` 吃到行尾；词内 `#` 不算；引号内 `#` 不算
 - 引号外 `;` `|` `&`（含 `&&` `||`）与未转义换行 = 命令边界，在此截断，只解析第一条并告警
 
-### 5.2 三条硬规则
+### 5.2 解析侧的硬规则
 
 1. **认得但 CurlSpec 表达不了的 flag**（`-s` `-v` `-o` `--retry` `--cacert` …）连值一起进 `rawArgs`，
    保证复制到终端行为等价，不被悄悄改掉。
@@ -170,6 +194,13 @@ curl 仍然**等一个永远不会来的响应体**，命令看起来卡死—�
    且解出来含 `:`，否则保留为普通头并告警）。
 3. **未知长选项默认按"带值"处理**（`--cacert ./ca.pem`），否则 `./ca.pem` 会被当成 URL；
    已知布尔集优先，避免把 URL 吞成布尔值。
+4. **多个 `-b` 合成一个 Cookie 头，连接符是 `"; "`**（实测 curl 8.19.0：`-b foo=bar -b session_id=X`
+   发出去的是 `Cookie: foo=bar; session_id=X`）。合成后的头**插回第一条 `-b` 出现时 headers 的长度位置**，
+   于是 Cookie 与自定义 `-H` 的相对顺序跟着命令走。同一条命令里另有 `-H 'Cookie: …'` 时按 curl 让 `-H` 赢、
+   把 `-b` 整个丢弃并给 `flag-conflict`（实测 curl 就是这么处理冲突的）。
+   旧实现是每条 `-b` push 一个头、再用逗号拼接，线上发成 `a=1,b=2` —— Cookie 头形状非法，服务端直接不认。
+5. **同名 `-H` 不合并**：实测 `-H 'X-A: 1' -H 'X-A: 2'` 线上就是发两行，逗号拼接等于偷偷改了请求。
+   唯一的例外是 Content-Type（`addHeader` 取后者），因为两条 CT 会让 body 归类摇摆不定。
 
 ### 5.3 与 bash 的三处**刻意**不一致
 
@@ -183,9 +214,17 @@ curl 仍然**等一个永远不会来的响应体**，命令看起来卡死—�
 
 `-X` 显式 > `-I/--head` → `HEAD` > `-G/--get` → `GET` > 有 `-d`/`-F` → `POST` > `GET`
 
-`-I` 输给 `-X` 时**不是丢弃**：`-I` 原文进 `rawArgs`；胜出方法是 `GET` 时连 `-X GET` 一起进
-（生成器对 GET 不输出 `-X`，不留就会被规范成裸 `-I`，方法从 GET 翻成 HEAD），胜出方法非 `GET`
-时只留 `-I`（`-X` 由生成器自己会输出，留了就重复）。两种情况都给 `flag-conflict`。
+实测 `-X` 恒赢，且与书写顺序无关（`curl -I url -X GET` 与 `curl -X GET url -I` 都是 GET）。
+
+`-I` 输给 `-X` 时**不是丢弃**：`-I` 原文进 `rawArgs` 并给 `flag-conflict`。
+`-X` **不再一起回填**——`methodExplicit=true` 时生成器自己就会输出 `-X METHOD`，留下原文等于发两条 `-X`。
+（旧规则是"GET 不输出 `-X`"，那时必须回填，否则重新生成只剩裸 `-I`、方法从 GET 翻成 HEAD；
+§4.1 的"何时输出 `-X`"改掉之后，这个补丁就撤销了。fixture `head-conflict-x-get` 钉的是新形态。）
+
+`--url-query` 不参与方法推断：`curl --url-query x url` 仍是 GET。它与 `-G` 是两条不同的通道
+（`-G` 把 `-d` 折进查询串，`--url-query` 自己就是查询串的一部分，追加时带 `&`），
+所以用 `viaUrlQuery` 标记而不是把它们并到一列里。实测 `-G --url-query a -d b=2` 时 curl 会**丢掉**
+`--url-query` 那项，我们不模仿这个丢弃（表单里两条都在），差异记在 §10。
 
 ---
 
@@ -330,6 +369,20 @@ M2 期间新增：脱敏遮盖不留首尾（§8）、分享载荷格式（§9�
 范围分工，免得翻错地方：本节只登记 **M0 那两处契约表不足**；分享码的格式在本文 §9；
 M2 必须先定的四条规矩（分享格式、脱敏遮盖形状、多环境迁移的冲突策略、导入永不覆盖）
 与两条"故意不做"（一键清空、`window.confirm`）写在 `docs/PLAN.md` §9。
+
+### 10.1 与真实 curl 的已登记差异
+
+对拍跑出来的、**暂时决定不修**的差异。列在这里是因为它们都会被用户撞到，
+"知道差在哪"比"看起来没有差异"有用。判据写在 `roundtrip.live.test.ts` 的 `KNOWN` 表里，
+按列登记（同一用例允许 cmd 侧差，但不许拿一个理由同时放过两列）。
+
+| # | 现象 | 为什么不立刻改 | 什么情况下必须改 |
+|---|---|---|---|
+| 1 | `rawArgs` 里存的是 **bash 引号原文**（`--json '{"a":null}'`、`-H 'foo;'`），切到 windows 风格时原样吐出单引号 → cmd.exe 不认，值就漏了 | 干净修法是把 `rawArgs` 从"字符串数组"改成结构化（flag + 值 + 是否带引号），那是契约 v2，要动 Kotlin 端与所有已存集合文件 | 一旦"粘到 cmd 跑不通"成为实际投诉，或 M4 本地 agent 要在 cmd 下代跑，就必须先做这个结构化 |
+| 2 | `--url-query x` 与 `--url-query 'x='` 在线路是两种请求（`/?x` vs `/?x=`），`CurlSpec` 的 `query[]` 只有一份表示，统一收成 `k=x, v=''` | 要分就得给 Param 加"有没有等号"的标志位，同样是契约 v2；现在两种写法生成出来都是 `--url-query 'x'` | 有人靠空值参数做接口判别时 |
+| 3 | `-G` 与 `--url-query` 同时出现时 curl **丢掉** `--url-query` 那项，我们的表单里两条都在、都会输出 | 模仿"丢弃"等于悄悄删用户填的数据；保留更符合"表单是意图"的定位，且这条组合本身是 curl 的已知怪癖 | 若对拍证明它会让人生成错请求，就改成给告警而不是静默保留 |
+| 4 | curl 把 Cookie 当**引擎头**：`-b` 写在 `-H` 前面还是后面，线上 Cookie 永远排在自定义头之前。我们是**按命令顺序插**（锚点 = 第一条 `-b` 出现的位置），于是 `-H 'X: y' -b 'a=1'` 这种写法线上头序与 curl 相反 | 主动换的：跟着命令走，生成的命令里 `-H` 的顺序和用户写的一致，编辑与对照都省事；HTTP/1.1 的头序本身无语义 | 遇到按头序判别的服务器（极少见，且这种服务多半也看顺序之外的东西），那时改成"引擎头一律提前" |
+| 5 | 网页端"发送"走 `fetch`，与 curl 不是一套：`-H 'K:'` 表达的"删头"在 fetch 里没法表达、查询串编码用 `encodeURIComponent`（§4.4 那张 curl 自己的表复现不了）、`rawArgs` 完全跳过 | 网页端本来就只能发"它能发的部分"，命令原文才是交付物；已经在结果区显示告警 | 任何把"网页发送结果"当成对拍标准的做法都不成立，M3/M4 一律以 curl 二进制为准 |
 
 ---
 
