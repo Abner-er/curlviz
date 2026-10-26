@@ -1,4 +1,5 @@
 import type { Param } from '@curlviz/core'
+import type { RowNote } from '../lib/display'
 
 interface Props {
   rows: Param[]
@@ -7,13 +8,27 @@ interface Props {
   valuePlaceholder: string
   /** header 表用冒号语法更贴近 curl，query 表用等号。仅影响表头文字。 */
   pairLabel?: string
+  /**
+   * 某一行的"特殊语义"胶囊。返回 null 就不画。
+   * 用在两处都能要命的地方：`--url-query` 来的项（生成时不折进 URL），
+   * 和值为空的头（curl 里 `-H 'K:'` 是**删头**，不是发空值头 —— 实测）。
+   * 光看输入框看不出来，用户会以为自己写的是"值为空的头"。
+   */
+  rowNote?: (row: Param) => RowNote | null
 }
 
 /**
  * query / header / form 三张表共用一套编辑器。
  * 空行永远留在末尾：用户点"添加"后不该再去找光标在哪。
  */
-export function KeyValueTable({ rows, onChange, keyPlaceholder, valuePlaceholder, pairLabel = '键 / 值' }: Props) {
+export function KeyValueTable({
+  rows,
+  onChange,
+  keyPlaceholder,
+  valuePlaceholder,
+  pairLabel = '键 / 值',
+  rowNote
+}: Props) {
   const set = (i: number, patch: Partial<Param>): void => {
     onChange(rows.map((r, k) => (k === i ? { ...r, ...patch } : r)))
   }
@@ -33,39 +48,49 @@ export function KeyValueTable({ rows, onChange, keyPlaceholder, valuePlaceholder
           </tr>
         </thead>
         <tbody>
-          {rows.map((r, i) => (
-            <tr key={i}>
-              <td>
-                <input
-                  type="checkbox"
-                  checked={r.enabled}
-                  onChange={(e) => set(i, { enabled: e.target.checked })}
-                  aria-label={`发送第 ${i + 1} 行`}
-                />
-              </td>
-              <td>
-                <input
-                  value={r.key}
-                  placeholder={keyPlaceholder}
-                  onChange={(e) => set(i, { key: e.target.value })}
-                  aria-label="名称"
-                />
-              </td>
-              <td>
-                <input
-                  value={r.value}
-                  placeholder={valuePlaceholder}
-                  onChange={(e) => set(i, { value: e.target.value })}
-                  aria-label="值"
-                />
-              </td>
-              <td>
-                <button className="mini" onClick={() => remove(i)} title="删除这一行">
-                  ✕
-                </button>
-              </td>
-            </tr>
-          ))}
+          {rows.map((r, i) => {
+            const note = rowNote?.(r) ?? null
+            return (
+              <tr key={i}>
+                <td>
+                  <input
+                    type="checkbox"
+                    checked={r.enabled}
+                    onChange={(e) => set(i, { enabled: e.target.checked })}
+                    aria-label={`发送第 ${i + 1} 行`}
+                  />
+                </td>
+                <td>
+                  <div className="kv-key">
+                    <input
+                      value={r.key}
+                      placeholder={keyPlaceholder}
+                      onChange={(e) => set(i, { key: e.target.value })}
+                      aria-label="名称"
+                    />
+                    {note !== null && (
+                      <span className="tag-mini" title={note.title}>
+                        {note.text}
+                      </span>
+                    )}
+                  </div>
+                </td>
+                <td>
+                  <input
+                    value={r.value}
+                    placeholder={valuePlaceholder}
+                    onChange={(e) => set(i, { value: e.target.value })}
+                    aria-label="值"
+                  />
+                </td>
+                <td>
+                  <button className="mini" onClick={() => remove(i)} title="删除这一行">
+                    ✕
+                  </button>
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
       <button

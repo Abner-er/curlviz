@@ -161,6 +161,44 @@ describe('buildRequest', () => {
     expect(notes).toContain('compressed')
   })
 
+  it('空值头如实说明"curl 里那是删头"，而不是假装等价', () => {
+    const s = spec()
+    s.url = 'https://api.example.com/ping'
+    s.headers = [param('Accept', '')]
+    expect(buildRequest(s).notes.join()).toContain('删掉这个头')
+    // fetch 那边确实只能发成空值头 —— 提示是唯一的诚实手段
+    expect(headerOf(buildRequest(s).init, 'accept')).toBe('')
+  })
+
+  it('rawArgs 不会被浏览器执行，条数与头几个 flag 要说出来', () => {
+    const s = spec()
+    s.url = 'https://api.example.com/ping'
+    s.rawArgs = ["-w '%{http_code}'", '-s', '-o /dev/null', '--retry 3']
+    const notes = buildRequest(s).notes.join()
+    expect(notes).toContain('4 个 flag')
+    expect(notes).toContain('-w')
+    expect(notes).toContain('不会执行')
+  })
+
+  it('--url-query 项折进 URL 时，如实说明编码表与 curl 不同', () => {
+    const s = spec()
+    s.url = 'https://api.example.com/s'
+    s.query = [{ key: 'g', value: 'hello world', enabled: true, viaUrlQuery: true }]
+    const r = buildRequest(s)
+    expect(r.url).toBe('https://api.example.com/s?g=hello%20world')
+    expect(r.notes.join()).toContain('curl 自己的表把空格编成 +')
+  })
+
+  it('一条普通 GET 不该冒出这三条提示（否则每次都喊"做不到"就没人看了）', () => {
+    const s = spec()
+    s.url = 'https://api.example.com/ping'
+    // 默认 spec 自带 --compressed，那条提示是原有的；这里要测的是本轮新加的三条不出现
+    s.options = { ...s.options, compressed: false }
+    s.query = [param('x', '1')]
+    s.headers = [param('X-Key', 'v')]
+    expect(buildRequest(s).notes).toEqual([])
+  })
+
   it('相对地址按页面 origin 拼全，否则 fetch 到的是本页', () => {
     const s = spec()
     s.url = '/api/ping'

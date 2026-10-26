@@ -1,4 +1,4 @@
-import { extractVars, type CurlSpec } from '@curlviz/core'
+import { extractVars, type CurlSpec, type Param } from '@curlviz/core'
 import type { HistoryEntry } from '../types'
 
 /**
@@ -6,6 +6,46 @@ import type { HistoryEntry } from '../types'
  * 单独成模块是为了脱离 jsdom 直接单测 —— 组件只负责把结果画出来，
  * 而这几个函数决定变量面板有没有漏、历史列表会不会泄密、下载文件名对不对。
  */
+
+/** 表格某一行的"特殊语义"胶囊：短文本 + 悬停解释。null = 不画。 */
+export interface RowNote {
+  text: string
+  title: string
+}
+
+/**
+ * query 表：`--url-query` 来的行要标出来。
+ *
+ * 不标就等于骗人：这一项复制出去时**不折进 URL**，仍写成 `--url-query 'k=v'`，
+ * 编码由 curl 做；而折进 URL 的那一份是我们自己用 encodeURIComponent 编的。
+ * 两者对同一个值能给出不同字节（空格 `+` vs `%20`），实测钉在 curl 8.19.0 上。
+ */
+export function queryRowNote(row: Param): RowNote | null {
+  if (row.viaUrlQuery !== true) return null
+  return {
+    text: '--url-query',
+    title:
+      "这一项来自 --url-query：复制出去时仍写成 --url-query 'k=v'，不折进 URL。" +
+      '编码交给 curl 自己做，而 curl 的表与我们折进 URL 的那份不同（空格 curl 编成 +，我们编成 %20）'
+  }
+}
+
+/**
+ * headers 表：值为空的行标成「删头」。
+ *
+ * 真实 curl 8.19.0 实测：`-H 'K:'` 是**不发这个头**，连 curl 自带的 Accept / User-Agent
+ * 都删得掉；要发一行空值头得写 `-H 'K;'`（我们建模不了，原样留在「选项」页）。
+ * 界面上只写着"值为空"，用户会以为发的是空值头 —— 这个误解足以让排查方向整体跑偏。
+ */
+export function headerRowNote(row: Param): RowNote | null {
+  if (!row.enabled || row.key.trim() === '' || row.value !== '') return null
+  return {
+    text: '删头',
+    title:
+      "实测：curl 里 -H 'K:' 是不发这个头（连它自带的 Accept / User-Agent 都删得掉），不是发一个空值头。" +
+      "要发空值行得写 -H 'K;'，那种形态我们建模不了，原样留在「选项」页"
+  }
+}
 
 /**
  * 扫一遍 spec 里所有可能出现 {{变量}} 的位置。

@@ -8,7 +8,7 @@ import { applySharePayload, loadBootState } from './lib/bootstrap'
 import { entryForEditor } from './lib/history'
 import { importCurlText } from './lib/imports'
 import { shiftTab } from './lib/tabs'
-import { prefersReducedMotion, scrollBehaviorFor } from './lib/display'
+import { headerRowNote, prefersReducedMotion, queryRowNote, scrollBehaviorFor } from './lib/display'
 import { usePersistence } from './hooks/usePersistence'
 import { useWorkbench } from './hooks/useWorkbench'
 import { useSend } from './hooks/useSend'
@@ -203,6 +203,7 @@ export function App() {
           keyPlaceholder="参数名"
           valuePlaceholder="值"
           pairLabel="参数 / 值"
+          rowNote={queryRowNote}
         />
       )
     }
@@ -212,8 +213,9 @@ export function App() {
           rows={wb.spec.headers}
           onChange={(rows) => wb.patch({ headers: rows })}
           keyPlaceholder="Header-Name"
-          valuePlaceholder="值（留空输出 K: 表示发空头）"
+          valuePlaceholder="值（留空 = -H 'K:'，curl 是删掉这个头）"
           pairLabel="头 / 值"
+          rowNote={headerRowNote}
         />
       )
     }

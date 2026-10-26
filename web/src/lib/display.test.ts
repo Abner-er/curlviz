@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { createDefaultSpec, type CurlSpec } from '@curlviz/core'
-import { extOf, historySummary, prefersReducedMotion, scrollBehaviorFor, suggestName, usedVars } from './display'
+import { createDefaultSpec, type CurlSpec, type Param } from '@curlviz/core'
+import {
+  extOf,
+  headerRowNote,
+  historySummary,
+  prefersReducedMotion,
+  queryRowNote,
+  scrollBehaviorFor,
+  suggestName,
+  usedVars
+} from './display'
 import type { HistoryEntry } from '../types'
 
 function entry(result?: HistoryEntry['result']): HistoryEntry {
@@ -85,5 +94,26 @@ describe('跳转滚动该不该平滑', () => {
     // 这条测的正是"测试环境里没有 window"这个事实：抽屉的跳转 effect 要调它，
     // 它一抛错，那三颗跳转按钮就变成点了没反应的那种最难发现的坏
     expect(prefersReducedMotion()).toBe(false)
+  })
+})
+
+describe('表格某一行的语义胶囊', () => {
+  const p = (o: Partial<Param>): Param => ({ key: 'k', value: 'v', enabled: true, ...o })
+
+  it('query 里 --url-query 来的行标出来，折进 URL 的行不标', () => {
+    expect(queryRowNote(p({ viaUrlQuery: true }))?.text).toBe('--url-query')
+    expect(queryRowNote(p({}))).toBeNull()
+    expect(queryRowNote(p({ viaUrlQuery: false }))).toBeNull()
+    // 不标就等于骗人：这两类复制出去时走的是两条不同通道（编码表也不同）
+    expect(queryRowNote(p({ viaUrlQuery: true }))?.title).toContain('不折进 URL')
+  })
+
+  it('headers 里值为空的行标「删头」，有值或没勾的都不标', () => {
+    expect(headerRowNote(p({ value: '' }))?.text).toBe('删头')
+    expect(headerRowNote(p({ value: 'x' }))).toBeNull()
+    expect(headerRowNote(p({ value: '', enabled: false }))).toBeNull()
+    expect(headerRowNote(p({ key: '', value: '' }))).toBeNull()
+    // 文案里必须带着实测那句"不是发空值头"，这是用户最容易误解的一点
+    expect(headerRowNote(p({ value: '' }))?.title).toContain('不是发一个空值头')
   })
 })

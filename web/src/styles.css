@@ -258,6 +258,23 @@ table.kv td {
   vertical-align: top;
 }
 
+/* 名称格 = 输入框 + 可选的语义胶囊（--url-query / 删头）。
+   table.kv input 是 width:100%，不收紧会让胶囊挤出格子，所以输入框 flex:1 + min-width:0，胶囊不参与压缩。 */
+.kv-key {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.kv-key input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.kv-key .tag-mini {
+  flex: 0 0 auto;
+}
+
 table.kv input,
 table.kv select {
   width: 100%;

@@ -124,6 +124,30 @@ export function buildRequest(
   if (spec.options.proxy.trim() !== '') notes.push('浏览器 fetch 不能指定代理（-x 无效），请走系统/浏览器代理或本地 agent。')
   if (spec.options.compressed) notes.push('--compressed 在这里不需要：浏览器总带 gzip/br 并自动解压。')
 
+  // 三条"浏览器做不到"的实话。都不算 bug，是 fetch 与 curl 的边界，但用户看不见就等于骗他。
+  const emptyHeaders = spec.headers.filter((h) => h.enabled && h.value === '' && h.key.trim() !== '')
+  if (emptyHeaders.length > 0) {
+    notes.push(
+      `${emptyHeaders.map((h) => `-H '${h.key}:'`).join(' ')} 在 curl 里是"删掉这个头"（实测连 curl 自带的 Accept / User-Agent 都删得掉），` +
+        '而 fetch 没有等价操作：自定义头会带着空值发出去，浏览器禁止脚本设的头（Cookie / Referer 等）则是整个忽略 —— 两种都不是"不发这行"。' +
+        '要真删请用「复制到终端」跑 curl。'
+    )
+  }
+  if (spec.rawArgs.length > 0) {
+    const shown = spec.rawArgs.slice(0, 3).join(' ') + (spec.rawArgs.length > 3 ? ' …' : '')
+    notes.push(
+      `「选项」页里原样保留的 ${spec.rawArgs.length} 个 flag（${shown}）浏览器发送不会执行，` +
+        '只有「复制到终端」跑 curl 才生效。'
+    )
+  }
+  const viaUrlQuery = spec.query.filter((p) => p.enabled && p.viaUrlQuery === true)
+  if (viaUrlQuery.length > 0) {
+    notes.push(
+      `其中 ${viaUrlQuery.length} 项来自 --url-query：浏览器发送只能把它们折进 URL，编码用 encodeURIComponent` +
+        '（空格编成 %20）；而 curl 自己的表把空格编成 +、! 编成 %21。复制到终端的那条仍然逐条写 --url-query，由 curl 编码。'
+    )
+  }
+
   return {
     url,
     init,
