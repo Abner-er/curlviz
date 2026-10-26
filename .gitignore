@@ -1,0 +1,29 @@
+# 源码/构建产物
+node_modules/
+dist/
+dist-ssr/
+build/
+coverage/
+*.tsbuildinfo
+
+# 本地数据/日志
+*.log
+npm-debug.log*
+.vite/
+
+# 编辑器/系统
+.vscode/*
+!.vscode/settings.json
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 本地 agent 运行时产物（M4）
+agent/tmp/
+
+# 契约测试临时输出
+spec/.tmp/
+
+# 本地核对用的临时脚本/输出（不入库）
+_wip/

@@ -1,0 +1,26 @@
+{
+  "name": "curlviz",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CurlViz — curl 可视化：面向运维的可视化 curl 工具，curl 与表单双向互转（Web PWA + Android，数据全本地）",
+  "license": "MIT",
+  "workspaces": [
+    "packages/*",
+    "web"
+  ],
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "dev": "npm run dev --workspace web",
+    "verify": "npm run typecheck && npm run test"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
