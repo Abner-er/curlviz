@@ -19,6 +19,7 @@ import {
   saveRequest,
   sanitizeCollectionState,
   sanitizeOpenRef,
+  searchLibrary,
   NO_OPEN_REF,
   toCollectionFile,
   toRequestFile,
@@ -277,5 +278,76 @@ describe('sanitizeOpenRef', () => {
     expect(sanitizeOpenRef({ collectionId: 'c1' }, state)).toEqual(NO_OPEN_REF)
     expect(sanitizeOpenRef({ collectionId: 1, requestId: 2 }, state)).toEqual(NO_OPEN_REF)
     expect(sanitizeOpenRef(null, state)).toEqual(NO_OPEN_REF)
+  })
+})
+
+describe('searchLibrary', () => {
+  const withHeaders = (name: string, url: string, headers: CurlSpec['headers']): CurlSpec => {
+    const s = spec(name, url)
+    s.headers = headers
+    return s
+  }
+
+  const build = (): CollectionState => {
+    let st = addCollection(addCollection(EMPTY_COLLECTION_STATE, '生产巡检').state, '测试环境').state
+    const prod = st.collections[0]!
+    const test = st.collections[1]!
+    st = saveRequest(st, prod.id, spec('查订单', 'https://api.example.com/orders')).state
+    st = saveRequest(
+      st,
+      prod.id,
+      withHeaders('重启服务', 'https://ops.example.com/restart', [
+        { key: 'X-Trace', value: 'abc', enabled: true },
+        { key: 'X-Disabled', value: 'nope', enabled: false }
+      ])
+    ).state
+    st = saveRequest(st, test.id, spec('拉指标', 'https://test.example.com/metrics')).state
+    return st
+  }
+
+  const lib = build()
+
+  it('空查询 = 不过滤，全部集合与全部请求都回来（面板只走一条渲染路径）', () => {
+    const hits = searchLibrary(lib, '')
+    expect(hits).toHaveLength(2)
+    expect(hits[0]!.requests).toHaveLength(2)
+    expect(hits[1]!.requests).toHaveLength(1)
+    expect(hits.every((h) => !h.nameHit)).toBe(true)
+  })
+
+  it('集合名命中就把整块带出来，并标 nameHit 让界面展开', () => {
+    const hits = searchLibrary(lib, '生产')
+    expect(hits).toHaveLength(1)
+    expect(hits[0]!.nameHit).toBe(true)
+    expect(hits[0]!.requests).toHaveLength(2)
+  })
+
+  it('按请求名 / URL / 方法 / 头名命中；不相关的集合整个消失', () => {
+    expect(searchLibrary(lib, '订单')[0]!.requests).toHaveLength(1)
+    expect(searchLibrary(lib, 'metrics')[0]!.collection.name).toBe('测试环境')
+    expect(searchLibrary(lib, 'post').length + searchLibrary(lib, 'get').length).toBe(2)
+    expect(searchLibrary(lib, 'x-trace')[0]!.requests.map((r) => r.spec.name)).toEqual(['重启服务'])
+    expect(searchLibrary(lib, '不存在的关键字')).toEqual([])
+  })
+
+  it('大小写不敏感，前后空格忽略', () => {
+    expect(searchLibrary(lib, '  ORDERS  ')).toHaveLength(1)
+    expect(searchLibrary(lib, 'X-TRACE')).toHaveLength(1)
+    expect(searchLibrary(lib, '   ')).toHaveLength(2) // 只剩空格等于没搜
+  })
+
+  it('禁用状态的头名不参与搜索', () => {
+    expect(searchLibrary(lib, 'x-disabled')).toEqual([])
+  })
+
+  it('不搜值：值里的字符串命中不了（免得把 token 之类显示在命中列表上）', () => {
+    expect(searchLibrary(lib, 'abc')).toEqual([])
+    expect(searchLibrary(lib, 'nope')).toEqual([])
+  })
+
+  it('保持用户自己的顺序，不做相关度重排', () => {
+    const hits = searchLibrary(lib, 'https')
+    expect(hits.map((h) => h.collection.name)).toEqual(['生产巡检', '测试环境'])
+    expect(hits[0]!.requests.map((r) => r.spec.name)).toEqual(['查订单', '重启服务'])
   })
 })

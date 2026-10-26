@@ -198,6 +198,52 @@ export function requestCount(state: CollectionState): number {
 }
 
 /* ------------------------------------------------------------------ */
+/* 搜索（左栏资料库）                                                   */
+/* ------------------------------------------------------------------ */
+
+export interface LibraryMatch {
+  collection: StoredCollection
+  /** 命中的请求。集合名本身命中时是它的全部请求。 */
+  requests: StoredRequest[]
+  /** 集合名命中：界面据此决定整块展开，而不是只挑命中的那几条。 */
+  nameHit: boolean
+}
+
+/** 一条请求里可被搜到的文本：名称、URL、方法，以及头名 / 参数名（不含值）。 */
+function requestHaystack(req: StoredRequest): string {
+  const keys = [...req.spec.headers, ...req.spec.query].filter((p) => p.enabled).map((p) => p.key)
+  return [req.spec.name, req.spec.url, req.spec.method, ...keys].join('\n').toLowerCase()
+}
+
+/**
+ * 按关键字过滤集合库。
+ *
+ * - 空查询返回**全部集合 + 全部请求**，让面板只有一条渲染路径，不必区分"搜索态"
+ * - 集合名命中 → 整个集合算命中，带出它的所有请求
+ * - 否则只带出命中的请求；一条都不中的集合从结果里消失
+ * - **保持用户自己的顺序**，不做相关度排序：这个库是人手工整理的，
+ *   搜一次就重排一次会让"我那条明明排第一的"突然找不到
+ * - 不搜值：值里常是凭据与环境数据，命中列表既不是要找的东西，
+ *   又会把 token 半截显示在屏幕上
+ */
+export function searchLibrary(state: CollectionState, query: string): LibraryMatch[] {
+  const q = query.trim().toLowerCase()
+  if (q === '') {
+    return state.collections.map((collection) => ({ collection, requests: collection.requests, nameHit: false }))
+  }
+  const out: LibraryMatch[] = []
+  for (const collection of state.collections) {
+    if (collection.name.toLowerCase().includes(q)) {
+      out.push({ collection, requests: collection.requests, nameHit: true })
+      continue
+    }
+    const hits = collection.requests.filter((r) => requestHaystack(r).includes(q))
+    if (hits.length > 0) out.push({ collection, requests: hits, nameHit: false })
+  }
+  return out
+}
+
+/* ------------------------------------------------------------------ */
 /* 导入导出                                                            */
 /* ------------------------------------------------------------------ */
 
