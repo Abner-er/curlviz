@@ -18,7 +18,14 @@ export const KEYS = {
   draft: 'draft',
   history: 'history',
   settings: 'settings',
-  vars: 'vars'
+  /** M1 的扁平变量表；M2 起迁移进 environments 的「默认」环境，键仍留着是为了能读旧数据。 */
+  vars: 'vars',
+  /** 集合库（CollectionState）。 */
+  collections: 'collections',
+  /** 命名环境与当前激活项（EnvState）。 */
+  environments: 'environments',
+  /** 编辑器里这条 spec 是从哪个集合的哪条请求打开的（支持"改完就地更新"）。 */
+  openRef: 'openRef'
 } as const
 
 export type StoreKey = (typeof KEYS)[keyof typeof KEYS]
