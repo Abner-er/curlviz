@@ -22,13 +22,14 @@ describe('fixture 自身健康度', () => {
   it(`共 ${all.length} 条用例、${files.length} 个文件`, () => {
     // 这个数字是刻意写死的绊线：增删 fixture 时必须同步改这里，
     // 这样"文件被误删/漏读"和"手滑改坏目录"都会被立刻拦下。
-    expect(all.length, '用例总数').toBe(59)
-    expect(files.length).toBe(5)
+    expect(all.length, '用例总数').toBe(79)
+    expect(files.length).toBe(6)
   })
 
-  it('能读到 5 个 fixture 文件', () => {
+  it('能读到 6 个 fixture 文件', () => {
     expect(files.map((f) => f.file).sort()).toEqual([
       'body.json',
+      'book-curl.json',
       'headers-and-auth.json',
       'options-and-rawargs.json',
       'tokenizer-edge.json',

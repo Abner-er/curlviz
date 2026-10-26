@@ -1,0 +1,288 @@
+{
+  "$comment": "CurlViz 契约用例：取材《学习 curl》一书的手抄命令。canonical=true 表示 generate(parse(curl)) 必须逐字符等于 curl，因此 curl 字段写的是生成器的规范多行形态；书里的单行原写法凡与规范形态不同的都标 parse-only。每条期望值都来自 _wip/dump.json 与 roundtrip.live.test.ts 的真实 curl 8.19.0 实测，不是凭记忆手写。",
+  "fixtures": [
+    {
+      "id": "book-merge-short-with-method",
+      "title": "书 03-02：短选项合并还能挂值 `-siX POST`（解析接受，生成不回这种写法）",
+      "tags": ["book", "options", "method", "parse-only"],
+      "canonical": false,
+      "curl": "curl -siX POST https://api.example.com/items",
+      "spec": {
+        "method": "POST",
+        "url": "https://api.example.com/items",
+        "methodExplicit": true,
+        "rawArgs": ["-s", "-i"]
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "book-data-already-percent-encoded",
+      "title": "书 04-02：`-d` 里已编码的值解码入表单，生成时重编码回同一字节串（不许二次编码）",
+      "tags": ["book", "body", "form", "encoding"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/login' \\\n  -d 'username=Tom%26Jerry'",
+      "spec": {
+        "method": "POST",
+        "url": "https://api.example.com/login",
+        "methodExplicit": false,
+        "body": {
+          "type": "form",
+          "form": [{ "key": "username", "value": "Tom&Jerry", "enabled": true }]
+        }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "book-data-urlencode-ampersand",
+      "title": "书 04-02：`--data-urlencode` 存解码后的原文，生成统一走 `-d`（实测与手写成同一条请求）",
+      "tags": ["book", "body", "form", "parse-only"],
+      "canonical": false,
+      "curl": "curl --data-urlencode 'username=Tom&Jerry' https://api.example.com/login",
+      "spec": {
+        "method": "POST",
+        "url": "https://api.example.com/login",
+        "methodExplicit": false,
+        "body": {
+          "type": "form",
+          "form": [{ "key": "username", "value": "Tom&Jerry", "enabled": true }]
+        }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "book-url-query-with-data",
+      "title": "书 04-04：`--url-query` 与 `--data` 混用，两份值各归各位、互不吞并",
+      "tags": ["book", "query", "url-query", "body"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/s' \\\n  --url-query 'g=hello world' \\\n  -d 'y=2'",
+      "spec": {
+        "method": "POST",
+        "url": "https://api.example.com/s",
+        "query": [{ "key": "g", "value": "hello world", "enabled": true, "viaUrlQuery": true }],
+        "body": {
+          "type": "form",
+          "form": [{ "key": "y", "value": "2", "enabled": true }]
+        }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "book-url-query-bare-key",
+      "title": "书 04-04：`--url-query x`（无等号）落成空值参数，输出时补引号",
+      "tags": ["book", "query", "url-query", "parse-only"],
+      "canonical": false,
+      "curl": "curl --url-query x https://api.example.com/s",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/s",
+        "query": [{ "key": "x", "value": "", "enabled": true, "viaUrlQuery": true }]
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "book-url-query-empty-value",
+      "title": "书 04-04：`x=` 与 `x` 在 curl 里是两种请求（/?x= vs /?x），我们的 spec 只有一份表示——已登记差异",
+      "tags": ["book", "query", "url-query", "parse-only", "known-diff"],
+      "canonical": false,
+      "curl": "curl --url-query 'x=' https://api.example.com/s",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/s",
+        "query": [{ "key": "x", "value": "", "enabled": true, "viaUrlQuery": true }]
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "book-cookie-joined-with-semicolon-space",
+      "title": "书 05-01/11-01：多个 `-b` 合成一个 Cookie 头，分隔符是 \"; \"（实测，不是逗号）",
+      "tags": ["book", "headers", "cookie", "parse-only"],
+      "canonical": false,
+      "curl": "curl -b foo=bar -b session_id=XXXXXXXX https://api.example.com/a",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/a",
+        "headers": [
+          { "key": "Cookie", "value": "foo=bar; session_id=XXXXXXXX", "enabled": true }
+        ]
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "book-cookie-then-user-header",
+      "title": "书 05-01：`-b` 生成的 Cookie 头按命令位置插入——写在前面的用户头在后，写在后面的用户头也照顺序跟后",
+      "tags": ["book", "headers", "cookie"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/a' \\\n  -H 'Cookie: a=1' \\\n  -H 'X-Two: y'",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/a",
+        "headers": [
+          { "key": "Cookie", "value": "a=1", "enabled": true },
+          { "key": "X-Two", "value": "y", "enabled": true }
+        ]
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "book-header-semicolon-line",
+      "title": "书 05-01：`-H 'foo;'` 是\"整行原样发送\"，我们建模不了 → 连引号一起留在 rawArgs（Windows 侧引号会漏，已登记）",
+      "tags": ["book", "headers", "rawArgs"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/a' \\\n  -H 'foo;'",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/a",
+        "headers": [],
+        "rawArgs": ["-H 'foo;'"]
+      },
+      "expectWarnings": ["unknown-flag"]
+    },
+    {
+      "id": "book-range-multi-intervals",
+      "title": "书 06-01：多段范围 `-r 0-3,8-11,14-` 不建模，整条原样保留（值里没有需要引号的字符）",
+      "tags": ["book", "rawArgs", "range"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/hex.txt' \\\n  -r 0-3,8-11,14-",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/hex.txt",
+        "rawArgs": ["-r 0-3,8-11,14-"]
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "book-url-brace-glob",
+      "title": "书 06-03：URL 里的花括号通配归 curl 自己展开，我们只原样存、不改写",
+      "tags": ["book", "url", "glob"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/book/{curl,shell}.pdf'",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/book/{curl,shell}.pdf"
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "book-url-bracket-glob-off",
+      "title": "书 06-03：`-g` 关闭通配 + 方括号 URL 进出都不动",
+      "tags": ["book", "url", "glob", "rawArgs"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/magzine/[2021-2024]/index.html' \\\n  -g",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/magzine/[2021-2024]/index.html",
+        "rawArgs": ["-g"]
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "book-credentials-in-url-head",
+      "title": "书 07-01/05-03：URL 内嵌凭据不拆成 `-u`（留在 URL 里请求照样带），HEAD 走 `-I`",
+      "tags": ["book", "auth", "url", "method"],
+      "canonical": true,
+      "curl": "curl 'https://foobar:secrets@api.example.com/' \\\n  -I",
+      "spec": {
+        "method": "HEAD",
+        "url": "https://foobar:secrets@api.example.com/",
+        "auth": { "type": "none" },
+        "rawArgs": []
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "book-x-get-with-body",
+      "title": "实测：`-X GET --data-binary` 真是 GET 带 body；methodExplicit 必须为真，否则生成器省掉 `-X` 会让 curl 改成 POST",
+      "tags": ["book", "method", "body", "raw"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/echo' \\\n  -X GET \\\n  --data-binary 'a=1'",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/echo",
+        "methodExplicit": true,
+        "body": { "type": "raw", "raw": "a=1" }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "book-tls-flags-mixed",
+      "title": "认得的 `-k` 进开关位，认不出的 `-v/--tlsv1.1/--tls-max 1.2` 连值一起留原样",
+      "tags": ["book", "options", "rawArgs"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/' \\\n  -k \\\n  -v \\\n  --tlsv1.1 \\\n  --tls-max 1.2",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/",
+        "options": { "insecure": true },
+        "rawArgs": ["-v", "--tlsv1.1", "--tls-max 1.2"]
+      },
+      "expectWarnings": ["unknown-flag"]
+    },
+    {
+      "id": "book-max-redirs-rawarg",
+      "title": "书 09-04：`-L` 进开关位，`--max-redirs 2` 我们暂时表达不了，原样保留",
+      "tags": ["book", "options", "rawArgs", "redirect"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/manual1' \\\n  -L \\\n  --max-redirs 2",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/manual1",
+        "options": { "followRedirects": true },
+        "rawArgs": ["--max-redirs 2"]
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "book-upload-t-rawarg",
+      "title": "上传 `-T 文件`：不建模、原样保留；方法字段仍是 GET 但生成命令不写 `-X`，curl 自己会走 PUT",
+      "tags": ["book", "rawArgs", "method"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/put' \\\n  -T /tmp/greeting.txt",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/put",
+        "rawArgs": ["-T /tmp/greeting.txt"]
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "book-cookie-jar-after-head",
+      "title": "书 11-02：`-c` 写 cookie 文件不建模；生成顺序把 `-I` 排在 rawArgs 之前",
+      "tags": ["book", "rawArgs", "method", "ordering"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/foo' \\\n  -I \\\n  -c ~/cookie",
+      "spec": {
+        "method": "HEAD",
+        "url": "https://api.example.com/foo",
+        "rawArgs": ["-c ~/cookie"]
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "book-json-shorthand-rawarg",
+      "title": "书 04-06：`--json` 语法糖不折成 Content-Type + body（折了就分不清\"你写的\"还是\"糖给的\"），整条留原样",
+      "tags": ["book", "rawArgs", "body"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/items' \\\n  --json '{\"foo\":\"bar\",\"baz\":null}'",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/items",
+        "body": { "type": "none" },
+        "rawArgs": ["--json '{\"foo\":\"bar\",\"baz\":null}'"]
+      },
+      "expectWarnings": ["unknown-flag"]
+    },
+    {
+      "id": "book-writeout-flags",
+      "title": "`-w` / `-s` / `-o` 是输出控制不是请求内容，整条原样保留（`%{http_code}` 的花括号不参与变量替换）",
+      "tags": ["book", "rawArgs"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/a' \\\n  -w '%{http_code}' \\\n  -s \\\n  -o /dev/null",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/a",
+        "rawArgs": ["-w '%{http_code}'", "-s", "-o /dev/null"]
+      },
+      "expectWarnings": ["unknown-flag"]
+    }
+  ]
+}
