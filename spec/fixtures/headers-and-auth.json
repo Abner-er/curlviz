@@ -1,0 +1,167 @@
+{
+  "$comment": "CurlViz 契约用例：headers 与认证。重点锁死两件事：Authorization 折叠进 auth 后必须从 headers 移除；引号嵌套的转义形态。",
+  "fixtures": [
+    {
+      "id": "headers-with-redirect",
+      "title": "-L 与两个自定义头",
+      "tags": ["headers", "options"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/ping' \\\n  -L \\\n  -H 'Accept: application/json' \\\n  -H 'X-Trace-Id: abc123'",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/ping",
+        "options": { "followRedirects": true },
+        "headers": [
+          { "key": "Accept", "value": "application/json", "enabled": true },
+          { "key": "X-Trace-Id", "value": "abc123", "enabled": true }
+        ]
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "header-empty-value",
+      "title": "空值头 `Name:` 语义要保住",
+      "tags": ["headers"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/e' \\\n  -H 'X-Empty:'",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/e",
+        "headers": [{ "key": "X-Empty", "value": "", "enabled": true }]
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "single-quote-in-header-value",
+      "title": "值内含单引号：POSIX 的 '\\'' 转义形态",
+      "tags": ["headers", "quoting"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/x' \\\n  -H 'X-Note: it'\\''s ok'",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/x",
+        "headers": [{ "key": "X-Note", "value": "it's ok", "enabled": true }]
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "auth-basic",
+      "title": "-u 折叠成 basic 认证",
+      "tags": ["auth"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/private' \\\n  -u 'admin:s3cret'",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/private",
+        "auth": { "type": "basic", "basic": { "username": "admin", "password": "s3cret" } },
+        "headers": []
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "auth-basic-empty-password",
+      "title": "-u 'user:' 是空密码，不是缺密码",
+      "tags": ["auth"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/private' \\\n  -u 'ops:'",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/private",
+        "auth": { "type": "basic", "basic": { "username": "ops", "password": "" } }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "auth-bearer-header",
+      "title": "Authorization: Bearer 折叠成 bearer，headers 清空",
+      "tags": ["auth", "headers"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/me' \\\n  -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiJ9'",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/me",
+        "auth": { "type": "bearer", "bearer": { "token": "eyJhbGciOiJIUzI1NiJ9" } },
+        "headers": []
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "auth-basic-from-header",
+      "title": "Authorization: Basic 解码成用户名密码（非规范形态，生成时改走 -u）",
+      "tags": ["auth", "parse-only"],
+      "canonical": false,
+      "curl": "curl 'https://api.example.com/private' -H 'Authorization: Basic YWRtaW46czNjcmV0'",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/private",
+        "auth": { "type": "basic", "basic": { "username": "admin", "password": "s3cret" } },
+        "headers": []
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "cookie-and-referer-flags",
+      "title": "-b / -e 归一为标准头（生成时输出 -H，非规范形态）",
+      "tags": ["headers", "parse-only"],
+      "canonical": false,
+      "curl": "curl 'https://api.example.com/a' -b 'sid=abc123' -e 'https://ref.example.com/'",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/a",
+        "headers": [
+          { "key": "Cookie", "value": "sid=abc123", "enabled": true },
+          { "key": "Referer", "value": "https://ref.example.com/", "enabled": true }
+        ]
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "cookie-as-header",
+      "title": "Cookie 用 -H 书写的规范形态",
+      "tags": ["headers"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/a' \\\n  -H 'Cookie: sid=abc123' \\\n  -H 'Referer: https://ref.example.com/'",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/a",
+        "headers": [
+          { "key": "Cookie", "value": "sid=abc123", "enabled": true },
+          { "key": "Referer", "value": "https://ref.example.com/", "enabled": true }
+        ]
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "duplicate-content-type",
+      "title": "重复 Content-Type 取后者，避免生成两条同名头",
+      "tags": ["headers", "parse-only"],
+      "canonical": false,
+      "curl": "curl 'https://api.example.com/d' -X POST -H 'Content-Type: text/plain' -H 'Content-Type: application/json' -d '{\"a\":1}'",
+      "spec": {
+        "method": "POST",
+        "url": "https://api.example.com/d",
+        "headers": [{ "key": "Content-Type", "value": "application/json", "enabled": true }],
+        "body": { "type": "json", "json": "{\"a\":1}" }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "auth-with-other-headers",
+      "title": "认证头与其它头共存时的输出顺序：headers 先、auth 后",
+      "tags": ["auth", "headers", "ordering"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/api/v2/orders' \\\n  -X POST \\\n  -H 'Accept: application/json' \\\n  -H 'Content-Type: application/json' \\\n  -u 'key:secret' \\\n  --data-raw '{\"id\":42}'",
+      "spec": {
+        "method": "POST",
+        "url": "https://api.example.com/api/v2/orders",
+        "headers": [
+          { "key": "Accept", "value": "application/json", "enabled": true },
+          { "key": "Content-Type", "value": "application/json", "enabled": true }
+        ],
+        "auth": { "type": "basic", "basic": { "username": "key", "password": "secret" } },
+        "body": { "type": "json", "json": "{\"id\":42}" }
+      },
+      "expectWarnings": []
+    }
+  ]
+}

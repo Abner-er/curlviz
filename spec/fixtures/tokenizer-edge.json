@@ -1,0 +1,165 @@
+{
+  "$comment": "CurlViz 契约用例：词法边界（续行/注释/引号混排/转义）。字段含义见 spec/README.md。canonical=true 表示 generate(spec) 必须逐字符等于 curl。",
+  "fixtures": [
+    {
+      "id": "multiline-backslash-continuation",
+      "title": "标准反斜杠续行（Chrome「复制为 cURL」形态），且正好等于生成器输出",
+      "tags": ["tokenizer", "continuation"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/items' \\\n  -X POST \\\n  -H 'Content-Type: application/json' \\\n  --data-raw '{\"a\":1}'",
+      "spec": {
+        "method": "POST",
+        "url": "https://api.example.com/items",
+        "headers": [{ "key": "Content-Type", "value": "application/json", "enabled": true }],
+        "body": { "type": "json", "json": "{\"a\":1}" }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "continuation-varying-indent",
+      "title": "续行缩进不规则 + 选项顺序与生成器不同（-H 在 -L 前）",
+      "tags": ["tokenizer", "continuation"],
+      "canonical": false,
+      "curl": "curl 'https://api.example.com/ping' \\\n       -H 'Accept: application/json' \\\n     -L",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/ping",
+        "headers": [{ "key": "Accept", "value": "application/json", "enabled": true }],
+        "options": { "followRedirects": true }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "comment-leading-and-trailing",
+      "title": "首行注释 + 行尾注释都不进命令",
+      "tags": ["tokenizer", "comment"],
+      "canonical": false,
+      "curl": "# 拉取健康检查\ncurl 'https://api.example.com/health' -H 'Accept: */*'   # 只探活",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/health",
+        "headers": [{ "key": "Accept", "value": "*/*", "enabled": true }]
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "comment-between-continued-lines",
+      "title": "续行中间夹注释行。bash 会在此断命令，我们按粘贴场景宽容处理为同一条",
+      "tags": ["tokenizer", "comment", "continuation"],
+      "canonical": false,
+      "curl": "curl 'https://api.example.com/health' \\\n  # 中间的说明行\n  -L",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/health",
+        "options": { "followRedirects": true }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "double-quoted-escaped-json",
+      "title": "双引号内的 \\\" 还原成引号（Windows/cmd 常见写法）",
+      "tags": ["tokenizer", "quotes", "body"],
+      "canonical": false,
+      "curl": "curl -X POST \"https://api.example.com/items\" -H \"Content-Type: application/json\" -d \"{\\\"a\\\":1,\\\"b\\\":\\\"x y\\\"}\"",
+      "spec": {
+        "method": "POST",
+        "url": "https://api.example.com/items",
+        "headers": [{ "key": "Content-Type", "value": "application/json", "enabled": true }],
+        "body": { "type": "json", "json": "{\"a\":1,\"b\":\"x y\"}" }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "ansi-c-quoted-body",
+      "title": "ANSI-C 引用 $'...' 的 \\n 展开成真换行；真换行不能落 form（会被重新编码改字节），保持 raw",
+      "tags": ["tokenizer", "quotes", "ansi-c", "body"],
+      "canonical": false,
+      "curl": "curl -X POST 'https://api.example.com/form' --data $'name=foo\\nvalue=bar'",
+      "spec": {
+        "method": "POST",
+        "url": "https://api.example.com/form",
+        "body": { "type": "raw", "raw": "name=foo\nvalue=bar" }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "shell-escaped-single-quote",
+      "title": "经典 '\\\"'\\\"' 拼接收法（jq / shell-quote 产物）",
+      "tags": ["tokenizer", "quotes"],
+      "canonical": false,
+      "curl": "curl 'https://api.example.com/users' -H 'X-Note: it'\"'\"'s ok'",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/users",
+        "headers": [{ "key": "X-Note", "value": "it's ok", "enabled": true }]
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "single-quote-inside-double-quote",
+      "title": "双引号里直接写单引号，无需转义",
+      "tags": ["tokenizer", "quotes"],
+      "canonical": false,
+      "curl": "curl 'https://api.example.com/users' -H \"X-Note: it's fine\"",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/users",
+        "headers": [{ "key": "X-Note", "value": "it's fine", "enabled": true }]
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "unquoted-backslash-escapes",
+      "title": "引号外的 \\ 转义：空格进词内，不是词边界",
+      "tags": ["tokenizer", "escape"],
+      "canonical": false,
+      "curl": "curl https://api.example.com/a\\ b -H X-Token:\\ abc",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/a b",
+        "headers": [{ "key": "X-Token", "value": "abc", "enabled": true }]
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "semicolon-inside-quotes-not-boundary",
+      "title": "引号内的 ; 不是命令边界（只有引号外的 ; | & 才截断）",
+      "tags": ["tokenizer", "operator", "body"],
+      "canonical": false,
+      "curl": "curl 'https://api.example.com/q' --data 'a=1;b=2'",
+      "spec": {
+        "method": "POST",
+        "url": "https://api.example.com/q",
+        "body": { "type": "raw", "raw": "a=1;b=2" }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "crlf-continuation",
+      "title": "Windows 剪贴板的 CRLF：\\ + CRLF 也算续行，裸 CR 当空白",
+      "tags": ["tokenizer", "continuation", "crlf"],
+      "canonical": false,
+      "curl": "curl 'https://api.example.com/ping' \\\r\n  -H 'A: b' \\\r\n  -L",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/ping",
+        "headers": [{ "key": "A", "value": "b", "enabled": true }],
+        "options": { "followRedirects": true }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "unclosed-quote-warns",
+      "title": "未闭合引号：软报警 + 已解析部分仍可用（不能假装解析干净）",
+      "tags": ["tokenizer", "error"],
+      "canonical": false,
+      "curl": "curl 'https://api.example.com/users' -H 'X-Broken: oops",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/users",
+        "headers": [{ "key": "X-Broken", "value": "oops", "enabled": true }]
+      },
+      "expectWarnings": ["malformed"]
+    }
+  ]
+}

@@ -1,0 +1,254 @@
+{
+  "$comment": "CurlViz 契约用例：请求体四类（json / form / multipart / raw）及其生成形态。",
+  "fixtures": [
+    {
+      "id": "post-json-explicit-ct",
+      "title": "POST JSON，显式 Content-Type",
+      "tags": ["body", "json"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/items' \\\n  -X POST \\\n  -H 'Content-Type: application/json' \\\n  --data-raw '{\"name\":\"张三\",\"age\":3}'",
+      "spec": {
+        "method": "POST",
+        "url": "https://api.example.com/items",
+        "headers": [{ "key": "Content-Type", "value": "application/json", "enabled": true }],
+        "body": { "type": "json", "json": "{\"name\":\"张三\",\"age\":3}" }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "put-json",
+      "title": "PUT JSON，中文与空格原样保留",
+      "tags": ["body", "json"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/items/7' \\\n  -X PUT \\\n  -H 'Content-Type: application/json' \\\n  --data-raw '{\"note\":\"改 好 了\"}'",
+      "spec": {
+        "method": "PUT",
+        "url": "https://api.example.com/items/7",
+        "headers": [{ "key": "Content-Type", "value": "application/json", "enabled": true }],
+        "body": { "type": "json", "json": "{\"note\":\"改 好 了\"}" }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "post-form-single",
+      "title": "表单体：单个 -d 承载多个 k=v",
+      "tags": ["body", "form"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/login' \\\n  -X POST \\\n  -d 'user=admin&pass=123'",
+      "spec": {
+        "method": "POST",
+        "url": "https://api.example.com/login",
+        "body": {
+          "type": "form",
+          "form": [
+            { "key": "user", "value": "admin", "enabled": true },
+            { "key": "pass", "value": "123", "enabled": true }
+          ]
+        }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "post-form-multi-d",
+      "title": "curl 会把多个 -d 用 & 连接（非规范输入形态）",
+      "tags": ["body", "form", "parse-only"],
+      "canonical": false,
+      "curl": "curl 'https://api.example.com/items' -X POST -d 'a=1' -d 'b=2'",
+      "spec": {
+        "method": "POST",
+        "url": "https://api.example.com/items",
+        "body": {
+          "type": "form",
+          "form": [
+            { "key": "a", "value": "1", "enabled": true },
+            { "key": "b", "value": "2", "enabled": true }
+          ]
+        }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "post-form-canonical-joined",
+      "title": "多 -d 的规范输出：合成一条 -d",
+      "tags": ["body", "form"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/items' \\\n  -X POST \\\n  -d 'a=1&b=2'",
+      "spec": {
+        "method": "POST",
+        "url": "https://api.example.com/items",
+        "body": {
+          "type": "form",
+          "form": [
+            { "key": "a", "value": "1", "enabled": true },
+            { "key": "b", "value": "2", "enabled": true }
+          ]
+        }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "post-form-encoded-values",
+      "title": "表单值含空格与中文：解码存储、编码输出",
+      "tags": ["body", "form", "encoding"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/f' \\\n  -X POST \\\n  -d 'q=a%20b&tag=%E4%B8%AD'",
+      "spec": {
+        "method": "POST",
+        "url": "https://api.example.com/f",
+        "body": {
+          "type": "form",
+          "form": [
+            { "key": "q", "value": "a b", "enabled": true },
+            { "key": "tag", "value": "中", "enabled": true }
+          ]
+        }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "post-multipart-text-and-file",
+      "title": "multipart：一个文本字段 + 一个文件带 type",
+      "tags": ["body", "multipart"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/upload' \\\n  -X POST \\\n  -F 'title=hello' \\\n  -F 'file=@/tmp/a.png;type=image/png'",
+      "spec": {
+        "method": "POST",
+        "url": "https://api.example.com/upload",
+        "body": {
+          "type": "multipart",
+          "multipart": [
+            { "key": "title", "kind": "text", "value": "hello", "enabled": true },
+            { "key": "file", "kind": "file", "value": "/tmp/a.png", "contentType": "image/png", "enabled": true }
+          ]
+        }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "post-multipart-filename-and-type",
+      "title": "multipart 文件项的 filename 与 type 后缀顺序稳定",
+      "tags": ["body", "multipart"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/upload' \\\n  -X POST \\\n  -F 'file=@./up.png;filename=renamed.png;type=image/png'",
+      "spec": {
+        "method": "POST",
+        "url": "https://api.example.com/upload",
+        "body": {
+          "type": "multipart",
+          "multipart": [
+            {
+              "key": "file",
+              "kind": "file",
+              "value": "./up.png",
+              "filename": "renamed.png",
+              "contentType": "image/png",
+              "enabled": true
+            }
+          ]
+        }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "form-string-with-semicolon",
+      "title": "值里有分号必须用 --form-string，否则 curl 会当成 ;type= 语法",
+      "tags": ["body", "multipart", "quoting"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/u' \\\n  -X POST \\\n  --form-string 'tag=a;b'",
+      "spec": {
+        "method": "POST",
+        "url": "https://api.example.com/u",
+        "body": {
+          "type": "multipart",
+          "multipart": [{ "key": "tag", "kind": "text", "value": "a;b", "enabled": true }]
+        }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "raw-xml-binary",
+      "title": "--data-binary 是字节流，不做任何形态猜测",
+      "tags": ["body", "raw"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/ingest' \\\n  -X POST \\\n  -H 'Content-Type: application/xml' \\\n  --data-binary '<note>hello</note>'",
+      "spec": {
+        "method": "POST",
+        "url": "https://api.example.com/ingest",
+        "headers": [{ "key": "Content-Type", "value": "application/xml", "enabled": true }],
+        "body": { "type": "raw", "raw": "<note>hello</note>" }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "data-binary-at-file",
+      "title": "@file 引用读不到内容，整条进 rawArgs 不猜",
+      "tags": ["body", "rawArgs"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/up' \\\n  -X POST \\\n  --data-binary @payload.json",
+      "spec": {
+        "method": "POST",
+        "url": "https://api.example.com/up",
+        "body": { "type": "none" },
+        "rawArgs": ["--data-binary @payload.json"]
+      },
+      "expectWarnings": ["unknown-flag"]
+    },
+    {
+      "id": "data-urlencode-single",
+      "title": "--data-urlencode 的 name=content 形态落到 form（输出转成 -d）",
+      "tags": ["body", "form", "parse-only"],
+      "canonical": false,
+      "curl": "curl 'https://api.example.com/s' -X POST --data-urlencode 'q=hello world'",
+      "spec": {
+        "method": "POST",
+        "url": "https://api.example.com/s",
+        "body": { "type": "form", "form": [{ "key": "q", "value": "hello world", "enabled": true }] }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "get-with-data-flag",
+      "title": "-G 把 -d 变成 query，方法回到 GET",
+      "tags": ["body", "query", "parse-only"],
+      "canonical": false,
+      "curl": "curl 'https://api.example.com/search' -G -d 'q=curl' -d 'page=2'",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/search",
+        "query": [
+          { "key": "q", "value": "curl", "enabled": true },
+          { "key": "page", "value": "2", "enabled": true }
+        ],
+        "body": { "type": "none" }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "raw-body-not-a-pair",
+      "title": "-d 带非 k=v 内容时判为 raw（输出走 --data-binary）",
+      "tags": ["body", "raw", "parse-only"],
+      "canonical": false,
+      "curl": "curl 'https://api.example.com/r' -X POST -d 'not a pair'",
+      "spec": {
+        "method": "POST",
+        "url": "https://api.example.com/r",
+        "body": { "type": "raw", "raw": "not a pair" }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "json-array-body",
+      "title": "批量写入：JSON 数组体",
+      "tags": ["body", "json"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/batch' \\\n  -X POST \\\n  -H 'Content-Type: application/json' \\\n  --data-raw '[1,2,3]'",
+      "spec": {
+        "method": "POST",
+        "url": "https://api.example.com/batch",
+        "headers": [{ "key": "Content-Type", "value": "application/json", "enabled": true }],
+        "body": { "type": "json", "json": "[1,2,3]" }
+      },
+      "expectWarnings": []
+    }
+  ]
+}

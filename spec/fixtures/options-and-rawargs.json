@@ -1,0 +1,282 @@
+{
+  "$comment": "CurlViz 契约用例：options 开关、超时、代理，以及 rawArgs 逃生通道。",
+  "fixtures": [
+    {
+      "id": "insecure-compressed",
+      "title": "-k 与 --compressed",
+      "tags": [
+        "options"
+      ],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/c' \\\n  -k \\\n  --compressed",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/c",
+        "options": {
+          "insecure": true,
+          "compressed": true
+        }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "timeouts-agent-proxy",
+      "title": "-m 总时限 / --connect-timeout 连接时限 / -A / -x 各自独立",
+      "tags": [
+        "options"
+      ],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/slow' \\\n  -m 30 \\\n  --connect-timeout 5 \\\n  -A 'ops-bot/1.0' \\\n  -x 'http://127.0.0.1:7890'",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/slow",
+        "options": {
+          "timeoutMs": 30000,
+          "connectTimeoutMs": 5000,
+          "userAgent": "ops-bot/1.0",
+          "proxy": "http://127.0.0.1:7890"
+        }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "head-request",
+      "title": "-I 判定为 HEAD（非规范输入形态）",
+      "tags": [
+        "options",
+        "parse-only"
+      ],
+      "canonical": false,
+      "curl": "curl 'https://api.example.com/ping' -I",
+      "spec": {
+        "method": "HEAD",
+        "url": "https://api.example.com/ping",
+        "rawArgs": []
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "head-canonical",
+      "title": "HEAD 的规范输出是 -I（-X HEAD 会让 curl 死等响应体）",
+      "tags": [
+        "options"
+      ],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/ping' \\\n  -I",
+      "spec": {
+        "method": "HEAD",
+        "url": "https://api.example.com/ping"
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "head-x-head-normalized",
+      "title": "-X HEAD 输入被规范成 -I",
+      "tags": [
+        "options",
+        "parse-only"
+      ],
+      "canonical": false,
+      "curl": "curl 'https://api.example.com/ping' -X HEAD",
+      "spec": {
+        "method": "HEAD",
+        "rawArgs": []
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "head-conflict-x-get",
+      "title": "-I 与 -X GET 冲突：方法按 -X 取 GET，两个 flag 都留在 rawArgs",
+      "tags": [
+        "options",
+        "rawArgs",
+        "parse-only"
+      ],
+      "canonical": false,
+      "curl": "curl 'https://api.example.com/ping' -I -X GET",
+      "spec": {
+        "method": "GET",
+        "rawArgs": [
+          "-I",
+          "-X GET"
+        ]
+      },
+      "expectWarnings": [
+        "flag-conflict"
+      ]
+    },
+    {
+      "id": "unknown-flags-preserved",
+      "title": "认得但表达不了 / 完全不认的 flag 连值一起进 rawArgs",
+      "tags": [
+        "rawArgs"
+      ],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/status' \\\n  --cacert ./ca.pem \\\n  -s \\\n  --http2 \\\n  --retry 3",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/status",
+        "rawArgs": [
+          "--cacert ./ca.pem",
+          "-s",
+          "--http2",
+          "--retry 3"
+        ]
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "bundled-bool-flags",
+      "title": "-sSL 粘连展开：只回吐 -s -S，-L 落到 followRedirects",
+      "tags": [
+        "rawArgs",
+        "options",
+        "parse-only"
+      ],
+      "canonical": false,
+      "curl": "curl -sSL 'https://api.example.com/x'",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/x",
+        "options": {
+          "followRedirects": true
+        },
+        "rawArgs": [
+          "-s",
+          "-S"
+        ]
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "bundled-bool-canonical",
+      "title": "布尔粘连展开后的规范输出",
+      "tags": [
+        "rawArgs",
+        "options"
+      ],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/x' \\\n  -L \\\n  -s \\\n  -S",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/x",
+        "options": {
+          "followRedirects": true
+        },
+        "rawArgs": [
+          "-s",
+          "-S"
+        ]
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "no-location-explicit",
+      "title": "--no-location 等价于 curl 默认（不跟随），输出省略",
+      "tags": [
+        "options",
+        "parse-only"
+      ],
+      "canonical": false,
+      "curl": "curl 'https://api.example.com/a' --no-location",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/a",
+        "options": {
+          "followRedirects": false
+        },
+        "rawArgs": []
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "location-trusted",
+      "title": "--location-trusted 语义降级为 -L 并保留原 flag",
+      "tags": [
+        "options",
+        "rawArgs",
+        "parse-only"
+      ],
+      "canonical": false,
+      "curl": "curl 'https://api.example.com/a' --location-trusted",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/a",
+        "options": {
+          "followRedirects": true
+        },
+        "rawArgs": [
+          "--location-trusted"
+        ]
+      },
+      "expectWarnings": [
+        "unknown-flag"
+      ]
+    },
+    {
+      "id": "shell-substitution-warning",
+      "title": "双引号里的 $TOKEN 不求值，原文保留并告警",
+      "tags": [
+        "auth",
+        "variables",
+        "parse-only"
+      ],
+      "canonical": false,
+      "curl": "TOKEN=abc curl 'https://api.example.com/me' -H \"Authorization: Bearer $TOKEN\"",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/me",
+        "auth": {
+          "type": "bearer",
+          "bearer": {
+            "token": "$TOKEN"
+          }
+        }
+      },
+      "expectWarnings": [
+        "shell-substitution"
+      ]
+    },
+    {
+      "id": "multiple-commands-newline",
+      "title": "两条 curl 换行相连，只解析第一条并告警",
+      "tags": [
+        "edge",
+        "parse-only"
+      ],
+      "canonical": false,
+      "curl": "curl 'https://api.example.com/a' \\\n  -H 'X: 1'\ncurl 'https://api.example.com/b' -I",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/a",
+        "headers": [
+          {
+            "key": "X",
+            "value": "1",
+            "enabled": true
+          }
+        ]
+      },
+      "expectWarnings": [
+        "multiple-commands"
+      ]
+    },
+    {
+      "id": "multiple-commands-semicolon",
+      "title": "分号分隔的多条命令同理截断",
+      "tags": [
+        "edge",
+        "parse-only"
+      ],
+      "canonical": false,
+      "curl": "curl 'https://api.example.com/a' ; curl 'https://api.example.com/b' -I",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/a"
+      },
+      "expectWarnings": [
+        "multiple-commands"
+      ]
+    }
+  ]
+}

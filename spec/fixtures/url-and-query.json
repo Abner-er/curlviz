@@ -1,0 +1,101 @@
+{
+  "$comment": "CurlViz 契约用例：URL 与 query。字段含义见 spec/README.md。canonical=true 表示 generate(spec) 必须逐字符等于 curl。",
+  "fixtures": [
+    {
+      "id": "bare-get",
+      "title": "最简 GET：不跟随重定向、不压缩、不限时",
+      "tags": ["url"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/users'",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/users"
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "query-params",
+      "title": "URL 查询串拆进 query[]",
+      "tags": ["url", "query"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/users?page=1&limit=20'",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/users",
+        "query": [
+          { "key": "page", "value": "1", "enabled": true },
+          { "key": "limit", "value": "20", "enabled": true }
+        ]
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "query-percent-encoded",
+      "title": "已编码的查询值解码入库，生成时重新编码",
+      "tags": ["url", "query", "encoding"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/search?q=a%20b&tag=%E4%B8%AD%E6%96%87'",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/search",
+        "query": [
+          { "key": "q", "value": "a b", "enabled": true },
+          { "key": "tag", "value": "中文", "enabled": true }
+        ]
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "url-without-scheme",
+      "title": "内网常见写法：不带协议的主机端口",
+      "tags": ["url"],
+      "canonical": true,
+      "curl": "curl 'localhost:8080/actuator/health'",
+      "spec": {
+        "method": "GET",
+        "url": "localhost:8080/actuator/health"
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "url-with-fragment",
+      "title": "hash 片段不属于 query，不能被动过",
+      "tags": ["url"],
+      "canonical": true,
+      "curl": "curl 'https://ui.example.com/app#tab=2'",
+      "spec": {
+        "method": "GET",
+        "url": "https://ui.example.com/app#tab=2"
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "variables-throughout",
+      "title": "{{变量}} 遍布 url/query/header/auth，且不得被 percent-encode",
+      "tags": ["url", "variables", "auth"],
+      "canonical": true,
+      "curl": "curl 'https://{{host}}/api/users?page={{page}}' \\\n  -H 'X-Tenant: {{tenant}}' \\\n  -H 'Authorization: Bearer {{token}}'",
+      "spec": {
+        "method": "GET",
+        "url": "https://{{host}}/api/users",
+        "query": [{ "key": "page", "value": "{{page}}", "enabled": true }],
+        "headers": [{ "key": "X-Tenant", "value": "{{tenant}}", "enabled": true }],
+        "auth": { "type": "bearer", "bearer": { "token": "{{token}}" } }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "query-value-with-special-chars",
+      "title": "查询值含 & 与 = 时必须编码",
+      "tags": ["query", "encoding"],
+      "canonical": true,
+      "curl": "curl 'https://api.example.com/lookup?expr=a%26b%3Dc'",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.example.com/lookup",
+        "query": [{ "key": "expr", "value": "a&b=c", "enabled": true }]
+      },
+      "expectWarnings": []
+    }
+  ]
+}
