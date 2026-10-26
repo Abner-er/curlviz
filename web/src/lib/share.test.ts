@@ -108,6 +108,40 @@ describe('encodeShare / decodeShare', () => {
   })
 })
 
+describe('跨端参考样本（spec/README §9.4）', () => {
+  /**
+   * 这串是本实现生成的明文样本，文档里贴着同一串给安卓（M3）对拍用。
+   * 只断言**解码方向**：重新编码的字节顺序取决于各端对象的键序，不跨端可比，
+   * 所以任何端都不许拿"生成结果必须等于这串"当验收条件。
+   */
+  const VECTOR =
+    'curlviz:1:peyJraW5kIjoicmVxdWVzdCIsInJlZGFjdGVkIjp0cnVlLCJhdCI6MTczMDAwMDAwMDAwMCwic3BlYyI6eyJ2ZXJzaW9uIjoxLCJuYW1lIjoi56S65L6L77ya5Y-W5Zue5LiA5Liq55So5oi3IiwibWV0aG9kIjoiR0VUIiwidXJsIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS5jb20vdXNlcnMvNDIiLCJxdWVyeSI6W3sia2V5IjoidmVyYm9zZSIsInZhbHVlIjoiMSIsImVuYWJsZWQiOnRydWV9XSwiaGVhZGVycyI6W3sia2V5IjoiQWNjZXB0IiwidmFsdWUiOiJhcHBsaWNhdGlvbi9qc29uIiwiZW5hYmxlZCI6dHJ1ZX1dLCJib2R5Ijp7InR5cGUiOiJub25lIiwianNvbiI6IiIsImZvcm0iOltdLCJtdWx0aXBhcnQiOltdLCJyYXciOiIifSwiYXV0aCI6eyJ0eXBlIjoiYmVhcmVyIiwiYmFzaWMiOnsidXNlcm5hbWUiOiIiLCJwYXNzd29yZCI6IiJ9LCJiZWFyZXIiOnsidG9rZW4iOiLigKLigKLigKLigKLigKLigKLigKLigKIifX0sIm9wdGlvbnMiOnsiZm9sbG93UmVkaXJlY3RzIjp0cnVlLCJpbnNlY3VyZSI6ZmFsc2UsImNvbXByZXNzZWQiOnRydWUsInRpbWVvdXRNcyI6MTAwMDAsImNvbm5lY3RUaW1lb3V0TXMiOjAsInVzZXJBZ2VudCI6IiIsInByb3h5IjoiIn0sInJhd0FyZ3MiOltdfX0'
+
+  it('解码这串样本得到的是文档里写的那个请求', async () => {
+    const back = await decodeShare(VECTOR)
+    expect(back.kind).toBe('request')
+    expect(back.redacted).toBe(true)
+    expect(back.at).toBe(1730000000000)
+    expect(back.spec?.url).toBe('https://api.example.com/users/42')
+    expect(back.spec?.name).toBe('示例：取回一个用户')
+    expect(back.spec?.query[0]).toEqual({ key: 'verbose', value: '1', enabled: true })
+    expect(back.spec?.options.timeoutMs).toBe(10000)
+  })
+
+  it('样本标了 redacted，令牌就必须已经是遮盖态（原令牌不许出现在码里）', async () => {
+    const back = await decodeShare(VECTOR)
+    expect(back.spec?.auth.type).toBe('bearer')
+    expect(back.spec?.auth.bearer.token).toBe('••••••••')
+    expect(VECTOR).not.toContain('super-secret-token')
+  })
+
+  it('明文标记与 gzip 标记解出的是同一份内容（标记只说压缩，不改语义）', async () => {
+    const gz = await encodeShare(await decodeShare(VECTOR), true)
+    expect(gz.startsWith(`${SHARE_PREFIX}g`)).toBe(true)
+    expect((await decodeShare(gz)).spec).toEqual((await decodeShare(VECTOR)).spec)
+  })
+})
+
 describe('shareSizeHint', () => {
   it('小载荷不啰嗦，超容量的直说装不下', () => {
     expect(shareSizeHint('curlviz:1:pabc').message).toBeNull()
