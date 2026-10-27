@@ -51,8 +51,9 @@ npm run build && npm run preview --workspace @curlviz/web   # 看成品用，htt
 |---|---|
 | M0 契约 + 内核 | ✅ 79 条 fixture（47 条走完整往返）、core 350 个测试全绿，严格 TS 无错 |
 | M1 Web MVP | ✅ 导入/表单/双向转换/发送/响应预览/本地持久化，含首屏冒烟；`vite build` 通过 |
-| M2 Web 增强（集合/环境/历史/导入导出/分享） | ✅ 代码与测试完成（本轮实测 web 240 + core 350，typecheck 干净，产物已实测可访问）；剩下浏览器里的人工验收 |
+| M2 Web 增强（集合/环境/历史/导入导出/分享） | ✅ 代码与测试完成（现状口径 web 269 + core 350，typecheck 干净，产物已实测可访问）；剩下浏览器里的人工验收 |
 | M2.7 拿真实 curl 当裁判 | ✅ 45 条命令逐字节对拍 + 20 条书中命令进契约 + 4 处按实测改写；差异登记在 `spec/README.md` §10.1 |
+| M2.8 跨域预检判定 | ✅ 发送前提醒 + 失败定向 hint + headless Chrome 页面级探针；只动网页端，`CurlSpec` 与 fixtures 未变 |
 | M3 安卓 MVP | 未开始 |
 | M4 双端互通 + 本地 agent | 未开始 |
 
@@ -77,8 +78,10 @@ npm run build && npm run preview --workspace @curlviz/web   # 看成品用，htt
 2. **请求 / 集合导出**跟着"历史脱敏"那个开关走，默认开。
 3. **完整备份默认不脱敏**：脱敏过的备份没法拿来恢复自己的密码，等于废文件；
    所以它按明文导出并在界面上写明"里面有明文 token / 密码，请按密码对待这个文件"。要共享就勾脱敏。
-4. M2 的界面（集合面板、环境面板、分享弹窗、拖拽导入）**还没在真浏览器里人工点过**——
-   这个开发环境没有浏览器自动化。逻辑层有 240 条测试兜着（本轮测得），视觉与交互还需你自己开 `npm run dev` 过一遍。
+4. M2 的界面（集合面板、环境面板、分享弹窗、拖拽导入）**还没在真浏览器里逐一点过**——
+   逻辑层有 269 条测试兜着（本轮实测），另有一条 headless Chrome + CDP 的页面级探针
+   （见下一节，脚本放在仓库里被 gitignore 的 `_wip/` 下，故意不入库）能确认"提醒真的画到了页面上"；
+   视觉与交互仍需你自己开 `npm run dev` 过一遍。
 
 ## M2.7 做了什么：拿真实 curl 当裁判
 
@@ -104,6 +107,37 @@ npm run build && npm run preview --workspace @curlviz/web   # 看成品用，htt
   cmd.exe 不认 → `--json '{"a":null}'`、`-H 'foo;'` 的值会漏。干净修法是把 `rawArgs` 结构化，那是契约 v2、
   要动 Kotlin 端和所有已存集合文件，所以先登记在 `spec/README.md` §10.1 第 1 行。
 
+## M2.8 跨域这条路：把能算的算出来（2026-10-27）
+
+用户在页面里发 `https://token.sensenova.cn/v1/chat/completions`，控制台报
+`Response to preflight request doesn't pass access control check: It does not have HTTP ok status`。
+原先界面只有一句"分不清是被 CORS 拦了、服务不通、还是证书不受信"——那句话没错，但把**能算的部分**也一起推给了用户。
+
+- **不能算的是服务器答不答应，能算的是预检要不要发**：方法是否超出 GET/HEAD/POST、请求头是否在
+  Accept / Accept-Language / Content-Language 之内、Content-Type 是否是那三个安全值，全是 Fetch 标准里的死规则。
+  于是判据做成纯函数 `web/src/lib/fetch-rules.ts`（`assessCors`），组件只画结果。
+- **本机实测那颗网关**（2026-10-27 01:29 UTC，curl 直接打）：带标准预检头的 `OPTIONS` 回 **404**，
+  响应里**没有** `Access-Control-Allow-Methods` / `Allow-Headers`；同一路径 `POST` 回 **401**，却带着
+  `Access-Control-Allow-Origin` 回显来源。也就是**跨域支持只做了响应头那半截，预检那半截没实现**——
+  浏览器这条路必然走不通，跟命令对不对无关。这类接口不少见，所以提醒要提前给。
+- **发送前就提醒**：curl 预览区下面直接写明"到哪个 origin 是跨域、会被先打一个 OPTIONS 预检、触发点是
+  哪几项"，并指出出路是「复制到终端」（M4 的本地 agent 同样能发）。简单请求（不预检但仍跨域）另有一句：
+  多半发得出去，但对方不回 `Access-Control-Allow-Origin` 时**响应体照样读不到**。
+- **失败后按判定给定向 hint**：预检型直接引用浏览器原话（`doesn't pass access control check` /
+  `It does not have HTTP ok status`）并说清那句对应什么；判不出来（同源、URL 还没填）时保留原来那句"分不清"，
+  不硬编成 CORS。`-A` 的旧提醒在跨域判定成立时不再重复立一条——`user-agent` 已经作为触发点写进那句里了。
+- **提醒得先替换变量再判**：URL 写着 `{{host}}/v1/chat` 时 origin 根本解析不出来，`preSendNotices()` 里
+  先跑一遍 `resolveSpec`；变量没赋值就保持沉默，判不出来不瞎提醒。
+- **页面级验证**：headless Chrome + CDP 探针（起调试端口 → 把跨域命令写进 `curlviz.draft` → 重载 → 读
+  `document.body.innerText`）6 条断言全 PASS：提醒在预览区出现、点名 `Content-Type: application/json`、
+  报出目标 origin、给出「复制到终端」、等价 curl 仍渲染。顺带发现 `innerText` 会带上 CSS 的
+  `text-transform`，卡片标题读回来是「等价 CURL」。
+- **只动网页端**：这是浏览器独有的边界，`CurlSpec` 一个字段没改，跨端契约与 fixtures 不动；
+  安卓端（M3）用 OkHttp，压根没有 CORS 这件事。
+- 本轮实测：typecheck 0 错，core 350 passed + 1 skip（不变），web **269 passed**（新增 29 条：
+  `fetch-rules.test.ts` 16 条、`CurlPreview.test.tsx` 3 条、`http.test.ts` 6 条、`display.test.ts` 4 条），
+  `vite build` 119 模块、产物 266.63 kB（gzip 87.52），CSS 11.08 kB 未变。
+
 ## M1 在浏览器里做不到的事（不是 bug，是 fetch 的语义边界）
 
 浏览器发请求用的是 `fetch`，与 curl 不是同一套规矩。这些差距界面会逐条列出来（「这次发送的注意点」），
@@ -114,6 +148,7 @@ npm run build && npm run preview --workspace @curlviz/web   # 看成品用，htt
 | `-H 'Cookie: …'`、`Host`、`Origin`、`Referer`、`Content-Length` 等 | Fetch 标准里的 forbidden header，**会被浏览器悄悄丢掉**，脚本设了也不发 | 复制到终端 |
 | `-H 'K:'`（curl 里是**删掉这个头**，实测连自带的 `Accept` / `User-Agent` 都删得掉） | fetch 没有"删头"这个操作：自定义头会带着空值发出去，forbidden 头是整个忽略——两种都不是"不发这行" | 复制到终端 |
 | `--url-query 'k=v'` 由 curl 自己编码（实测空格 → `+`、`!` → `%21`） | 浏览器发送只能把它折进 URL，编码用 `encodeURIComponent`（空格 → `%20`），两份字节可以不同 | 复制到终端仍逐条写 `--url-query` |
+| 想发什么就发什么（跨域也一样） | 跨域时浏览器按 Fetch 标准**先打 OPTIONS 预检**（方法超出 GET/HEAD/POST、非安全清单头、`Content-Type: application/json` 都触发）；对方网关没实现 OPTIONS 路由就整条必死。工具现在发送前就算出触发点并写在预览区 | 复制到终端 / agent（M4） |
 | 跨域读全部响应头 | CORS 只暴露 6 个安全头，其余读不到；界面会标「(受限)」 | F12 看原始响应 |
 | `-k` 跳过证书校验 | 不可关。内网自签证书必须先让系统信任 | 系统信任链 / agent |
 | `-x` 指定代理 | fetch 不能指定代理，只能跟随系统设置 | 系统代理 / agent |

@@ -295,3 +295,69 @@ Cookie 头序主动换成"跟命令顺序"、fetch 路径天生表达不了删�
 界面验收一并挂在 dev 服务 `http://localhost:5183/` 上等点击。`methodExplicit` / `viaUrlQuery` 两个新字段
 目前只有 TS 端消费，Kotlin 端要等 M3 才能验"照文档就能实现"这句话；cmd 下 `rawArgs` 泄漏单引号是**已确认的
 真缺陷**，这一轮只留下了对拍证据，没给修法。
+
+> **当天就被 §14 补掉一半**：本段第一句"网页 fetch 路径没进自动化"已经不成立——headless Chrome + CDP
+> 能载着页面跑真 React，把"提醒有没有画到预览区"这类断言做成了自动的。**仍然没自动化的是**：点「发送」之后
+> 真网络请求与响应面板那一段（探针只读 `innerText`，不发请求），以及上一节那三条**删头 / rawArgs /
+> --url-query** 提醒在浏览器里的摆位。
+
+## 13. 皮肤换成工具密度风（M2.7.5，2026-10-27）
+
+起因是用户一句话：**"UI 太丑了"**。先问清三件事再动手（AskUserQuestion），拿到的是：风格取**工具密度风**
+（Linear / Vercel 那一路），**深浅两套都要精修**（不是深色好看、浅色能用），**改动范围只到皮肤与控件形状**——
+组件 TSX 结构与布局不动。最后这条约束是关键：它让整轮改动可以用 CSS 表达，改坏了也能一次回退。
+
+| 决策 | 细节 | 为什么 |
+|---|---|---|
+| 两套调色板都写全 | 中性面 4 级（`--bg < --bg-2 < --panel < --ctl`）+ 线 2 级 + 单一强调色 + 三个状态淡底 `--*-bg`，深浅各一份完整值 | 只覆写"看着不同的那几个"，浅色就会继承深色的假设，出半深半浅的怪东西 |
+| `color-scheme` 必写 | 暗色块 `color-scheme: dark`，浅色块 `light` | Windows 原生 `<select>` 下拉、复选框、滚动条不写就直接在暗底上冒白块 |
+| tint 不用 `color-mix()` | 淡底、淡边全写显式 hex | `color-mix()` 要 Chromium 111+，内网机器浏览器版本不可控；写死丑一点但哪儿都渲染得出来 |
+| 根字号 17px 不动 | 密度靠 `--r-ctl` 与控件 `min-height` 调 | `main` 那几档 `minmax()` 与结果栏 sticky 的 `top` 都是按 1rem≈17px 倒推的，动字号等于动布局算术 |
+| 阴影只给浮层 | 面板/卡片仍靠边框分层，只有弹层与抽屉用 `--shadow-pop` | 整页贴阴影跟"工具密度"这个目标是反的 |
+| 焦点环用 `box-shadow` | 不用 `outline` | `outline-offset` 在圆角控件上会露方角；焦点是 §10 的硬要求 |
+
+**自己回退掉的一处**：中途顺手把 header 内边距、`main` 的 gap/padding、结果栏 `top` 与 `max-height`
+都"调紧"了一遍。这些属于布局，不在那一纸约定里，而且新的 header 高度没在浏览器里量过、1100px 断点又依赖
+`1rem`——全部改回原值。留进文档是为了下次别再用"顺手"当越界的理由。
+
+**同轮内复算的对比度**：`_wip/pa11y.mjs` 直接抠 `web/src/styles.css` 两套 `:root` 里的真实 token 算
+WCAG 相对亮度比（早先那版脚本把色值抄在自己身上，CSS 一改读数就假）。读数：**25 对 × 深浅两套 = 50 组，
+文字类全部过 AA(4.5)，最低一组 4.71**（暗色 `--placeholder` 压 `--ctl`）。
+
+**登记但没修的隐患**：非文字那几对是 `--ctl` 对面板 **1.06（暗）/ 1.00（浅）**、`--line` 对面板 **1.26 / 1.25**、
+`--line-2` 对面板 **1.55 / 1.50**。浅色模式下输入框底与面板**同为 #fff**，"这是个框"全靠那条 1.25:1 的细线撑——
+密度很可能过了头。候选改法已算好（`_wip/tune.mjs`）：浅色 `--ctl:#f4f6f9 --line:#cfd5de --line-2:#b7bfcc
+--placeholder:#666e7b`（`placeholder/ctl` 从 4.47 回到 4.5 以上），暗色 `--ctl:#1d222b --line:#313842
+--line-2:#3d4552`（placeholder 不动，`ph/ctl` 4.75）。**为什么不当轮就改**：这是审美判断而不是规则判断，
+而人工验收（任务 #16）马上就要在真浏览器里看这一屏——先让眼睛裁决，再让数字配合。
+
+## 14. 跨域预检：能算的先算出来（M2.8，2026-10-27）
+
+用户在页面里发 `https://token.sensenova.cn/v1/chat/completions`，控制台给的是
+`Response to preflight request doesn't pass access control check: It does not have HTTP ok status`。
+界面上当时只有一句"分不清是被 CORS 拦了、服务不通、还是证书不受信"。那句话没错，但它把**本来能算出来的部分**
+也一起推给了用户——预检要不要发是 Fetch 标准里的死规则，算不出来的只有"对方答不答应"。
+
+| 决策 | 细节 | 为什么 |
+|---|---|---|
+| 判据做成纯函数 | `web/src/lib/fetch-rules.ts` 的 `assessCors(spec, pageBase)` → `{pageOrigin, targetOrigin, preflightReasons[]}` 或 `null`；组件只画结果 | web 层一贯分工（§10、§12）：会判错的东西必须能脱离 jsdom 单测 |
+| 只算真会上线的头 | forbidden 请求头那张表**两边共用一份**（`http.ts` 用它决定发不发，这里用它决定触不触发） | 被 fetch 丢掉的头不上线也就不触发预检；两处各抄一份迟早漂 |
+| 判不出来就沉默 | 同源、URL 没填、`{{host}}` 没赋值、页面地址取不到 → 一律 `null` | 猜一个 origin 再据它写警告，比不警告更坏 |
+| 提醒前移到发送前 | curl 预览区下方直接写"到哪个 origin 跨域、会被先打 OPTIONS 预检、触发点是哪几项" | 白点一次发送再去翻控制台，是最浪费的一种反馈 |
+| 失败 hint 对上原话 | 预检型 hint 逐字引用浏览器那句，用**直撇号 `doesn't`** 与 Chrome 一致；判不出来时保留原那句"分不清" | 文案不能冒充诊断结论：说"多半是 CORS"可以，说"就是 CORS"不行 |
+| `-A` 不再重复立条 | 跨域判定成立时 `user-agent` 已作为触发点写进那句；只在判定为 `null` 时才补旧的假设性提醒 | 同一件事在注意点里出现两遍，用户就开始不信这个列表 |
+| 先替换变量再判 | `preSendNotices()` 里先跑 `resolveSpec`，再拿 resolved spec 判 origin | URL 写着 `{{host}}/v1/chat` 时 origin 解析不出来，最该提醒的那条反而没提醒 |
+| 探针验到页面级 | headless Chrome + CDP：起调试端口 → 把跨域命令写进 localStorage 的 `curlviz.draft` → 重载 → 读 `document.body.innerText` 断言 6 项全 PASS | 这是 §12"fetch 路径没进自动化"的第一次补齐；顺带发现 `innerText` 会带 CSS 的 `text-transform`（标题读回来是「等价 CURL」） |
+
+**本机实测那颗网关**（2026-10-27 01:29 UTC，curl 直打）：带标准预检头的 `OPTIONS` 回 **404**，响应里**没有**
+`Access-Control-Allow-Methods` / `Allow-Headers`；同一路径 `POST` 回 **401**，却带着
+`Access-Control-Allow-Origin` 回显来源。跨域支持只做了响应头那半截——**浏览器这条路必然走不通**，
+跟命令对不对无关。出路只有两条：「复制到终端」（现在就有）与本地 agent（M4）。
+
+**边界**：这一轮**一个 `CurlSpec` 字段都没动**，`spec/` 契约与 fixtures 不受影响。CORS 是浏览器独有的规矩，
+安卓端（M3）走 OkHttp 压根没有这件事；但 §6 里"网页发不了的命令仍要能原样复制出去"这条承诺因此更硬了。
+
+**本轮实测数字**：`npm run verify` 全绿 = 两个 workspace `tsc --noEmit` 零错、core 350 passed + 1 skipped
+（7 文件，未变）、web **269 passed**（21 文件，新增 29 条：`fetch-rules.test.ts` 16、`http.test.ts` +6、
+`display.test.ts` +4、`CurlPreview.test.tsx` 3）；`npm run build` 119 模块，`index-*.js` 266.63 kB / gzip 87.52，
+CSS 11.08 kB / gzip 3.12 未变。
