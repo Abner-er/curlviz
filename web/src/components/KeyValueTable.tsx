@@ -1,5 +1,9 @@
 import type { Param } from '@curlviz/core'
 import type { RowNote } from '../lib/display'
+import { applyRowEdit, needsDraftRow } from '../lib/kv-rows'
+
+/** 草稿行的形状。整张表共用一个常量：只读，写的时候一律展开成新对象。 */
+const BLANK: Param = { key: '', value: '', enabled: true }
 
 interface Props {
   rows: Param[]
@@ -19,7 +23,10 @@ interface Props {
 
 /**
  * query / header / form 三张表共用一套编辑器。
- * 空行永远留在末尾：用户点"添加"后不该再去找光标在哪。
+ *
+ * 末行永远是空行，不用先点"＋ 添加一行"再打字（旧版那句注释是这么承诺的，实现却要点按钮）。
+ * 草稿行不进数据：打字那一刻才追加成真行，所以页签上的计数、等价 curl、
+ * 存进集合的东西都不会被一行空白污染。
  */
 export function KeyValueTable({
   rows,
@@ -29,9 +36,10 @@ export function KeyValueTable({
   pairLabel = '键 / 值',
   rowNote
 }: Props) {
-  const set = (i: number, patch: Partial<Param>): void => {
-    onChange(rows.map((r, k) => (k === i ? { ...r, ...patch } : r)))
-  }
+  // 末行已经是一行空行就拿它当草稿，不再补一行：否则表尾永远多一格看不懂的空白
+  const body: Param[] = needsDraftRow(rows) ? [...rows, BLANK] : rows
+
+  const set = (i: number, patch: Partial<Param>): void => onChange(applyRowEdit(rows, i, BLANK, patch))
   const remove = (i: number): void => onChange(rows.filter((_, k) => k !== i))
 
   return (
@@ -48,8 +56,10 @@ export function KeyValueTable({
           </tr>
         </thead>
         <tbody>
-          {rows.map((r, i) => {
+          {body.map((r, i) => {
             const note = rowNote?.(r) ?? null
+            // 草稿行不在 rows 里，也就没有"删掉它"这回事：它下一格就是新的草稿行
+            const real = i < rows.length
             return (
               <tr key={i}>
                 <td>
@@ -84,22 +94,17 @@ export function KeyValueTable({
                   />
                 </td>
                 <td>
-                  <button className="mini" onClick={() => remove(i)} title="删除这一行">
-                    ✕
-                  </button>
+                  {real && (
+                    <button className="mini" onClick={() => remove(i)} title="删除这一行">
+                      ✕
+                    </button>
+                  )}
                 </td>
               </tr>
             )
           })}
         </tbody>
       </table>
-      <button
-        className="mini"
-        style={{ marginTop: '0.4rem' }}
-        onClick={() => onChange([...rows, { key: '', value: '', enabled: true }])}
-      >
-        ＋ 添加一行
-      </button>
     </div>
   )
 }

@@ -55,6 +55,7 @@ npm run build && npm run preview --workspace @curlviz/web   # 看成品用，htt
 | M2.7 拿真实 curl 当裁判 | ✅ 45 条命令逐字节对拍 + 20 条书中命令进契约 + 4 处按实测改写；差异登记在 `spec/README.md` §10.1 |
 | M2.8 跨域预检判定 | ✅ 发送前提醒 + 失败定向 hint + headless Chrome 页面级探针；只动网页端，`CurlSpec` 与 fixtures 未变 |
 | M2.9 布局对齐 Postman | ✅ 三栏常驻（操作栏 / 工作台 / 可拖分隔条 / 结果）+ 分裂发送按钮；1024 宽下响应卡从视口外（y=1028）进到视口内，`CurlSpec` 与 fixtures 仍未变 |
+| M2.9.1 末行常驻草稿行 | ✅ Query / Headers / 表单 / multipart 四张表末行永远留一行空行，打字即落该行；「＋ 添加一行 / 添加一项」按钮去掉，草稿行不进数据（角标与 curl 输出实测不变） |
 | M3 安卓 MVP | 未开始 |
 | M4 双端互通 + 本地 agent | 未开始 |
 
@@ -178,6 +179,37 @@ npm run build && npm run preview --workspace @curlviz/web   # 看成品用，htt
   `components/Rail.test.tsx` 5、`CurlPreview.test.tsx` 3 → 10、`App.smoke.test.tsx` 12 → 14、`display.test.ts` +1），
   `vite build` 125 模块、产物 274.20 kB（gzip 90.57）、CSS 16.16 kB（gzip 4.01）。
   布局与对比度两份探针在 `_wip/layout_shot.mjs`、`_wip/contrast_live.mjs`（gitignore，不入库）。
+
+## M2.9.1 末行常驻草稿行（2026-10-27）
+
+用户原话："默认显示增加一行，不需要手动＋"。旧版每次加参数都要先点一下「＋ 添加一行」再打字，
+而那个按钮点完只是往数组尾追加一条空记录——光标还得再找一次。
+
+- **末行永远是一行能直接打字的空行**：Query / Headers / 表单 / multipart 四张表都是这个行为，
+  「＋ 添加一行」「＋ 添加一项」两颗按钮去掉。
+- **判据是纯函数** `web/src/lib/kv-rows.ts`：`needsDraftRow(rows)`（末行是不是已经空着）与
+  `applyRowEdit(rows, index, blank, patch)`（下标越界＝打在草稿行上 → 落成一条真记录）。
+  组件只接线，判错的可能都在 lib 层，单测脱离 DOM 跑。
+- **"空"的定义要两个都空**：`{key:'Accept', value:''}` 不是空行，它是 curl 的 `-H 'Accept:'` = **删掉这个头**
+  （M2.7 实测），把它当草稿吃掉就是删数据。所以判据只看 `key === '' && value === ''`。
+- **草稿行不进 state**，只在渲染时临时拼在末尾。这么选之前先确认了三件事都成立：生成器本来就过滤
+  `key === ''` 的行、页签计数是 `.filter(q => q.enabled && q.key !== '')`、存进集合的 JSON 因此不多一项。
+  实测打字前后角标从 `Query` 变成 `Query (1)`、`等价 curl` 从 `curl ''` 变成 `curl '?trace2='`，
+  草稿那一行既不出现在命令里也不出现在计数里。
+- **草稿行不画 ✕**：它不在数据里，"删掉它"没有对应动作，留一颗按了没反应的按钮比留空更糟。
+- **真浏览器读数**（headless Chrome + CDP，`_wip/draft_row.mjs`）：空表 1 行 → 在末行敲 `trace`
+  → 焦点仍在同一格、值就是 `trace`、下面补出新的空白行（不掉焦点、不跳字、不长出两行）；
+  再敲第二次落在同一行；敲进值列则落进值列。
+- **multipart 那张表没复用组件**（七列形状差太远），同一套草稿行逻辑照着写了一遍，
+  所以单独补 4 条测试钉住它——`KeyValueTable` 的测试覆盖不到这里。
+- **顺手修一处拼写**：字段名列的 placeholder 原本是 `filed`（`field` 的笔误），改成 `file`。
+- **两条已知代价**（不是 bug，登记清楚）：① 只填值不填参数名的行会成真数据，界面上留着、
+  生成时忽略——改之前"点＋再只填值"是同样结果；② 只填了 filename 的半截 multipart 行当下不再补空白行，
+  补齐字段名后下一格才长出草稿行。
+- 本轮实测：typecheck 0 错，core 350 passed + 1 skip（不变），web **334 passed**（25 → 27 文件，
+  316 → 334，新增 18 条：`lib/kv-rows.test.ts` 10、`components/KeyValueTable.test.tsx` 4 → 8、
+  `components/Editors.test.tsx` 4），`vite build` 126 模块、产物 274.18 kB（gzip 90.59）、
+  CSS 16.16 kB（gzip 4.01）未变。
 
 ## M1 在浏览器里做不到的事（不是 bug，是 fetch 的语义边界）
 

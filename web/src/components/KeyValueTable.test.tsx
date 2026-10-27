@@ -63,3 +63,42 @@ describe('键值表的语义胶囊', () => {
     expect(html.split('tag-mini').length - 1).toBe(1)
   })
 })
+
+/**
+ * 末行那格草稿。
+ *
+ * 数 `<tr>` 要减掉表头那一行；数删除按钮用它的 title，比数 `class="mini"` 稳
+ * （胶囊也是 tag-mini 字样，别拿形状当身份）。
+ */
+describe('末行的草稿行', () => {
+  const body = (rows: Param[]): string =>
+    renderToString(
+      <KeyValueTable rows={rows} onChange={() => undefined} keyPlaceholder="参数名" valuePlaceholder="值" />
+    ).replaceAll('<!-- -->', '')
+  const rowCount = (html: string): number => html.split('<tr').length - 1 - 1
+  const delCount = (html: string): number => html.split('title="删除这一行"').length - 1
+
+  it('空表也有一行能直接打字，不必先点按钮', () => {
+    const html = body([])
+    expect(rowCount(html)).toBe(1)
+    expect(html).toContain('placeholder="参数名"')
+  })
+
+  it('末行已经空着就不再补第二格空白', () => {
+    expect(rowCount(body([{ key: 'a', value: '1', enabled: true }, { key: '', value: '', enabled: true }]))).toBe(2)
+  })
+
+  it('末行有内容时多出一格草稿，但那格不给删除按钮（它不在数据里）', () => {
+    const html = body([
+      { key: 'a', value: '1', enabled: true },
+      { key: 'b', value: '2', enabled: true }
+    ])
+    expect(rowCount(html)).toBe(3)
+    expect(delCount(html)).toBe(2)
+  })
+
+  it('「＋ 添加一行」那颗按钮整个不再出现', () => {
+    const html = body([])
+    expect(html).not.toContain('添加一行')
+  })
+})

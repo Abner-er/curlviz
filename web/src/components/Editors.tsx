@@ -1,4 +1,5 @@
 import type { AuthConfig, BodyType, CurlSpec, MultipartParam, RequestOptions } from '@curlviz/core'
+import { applyRowEdit, needsDraftRow } from '../lib/kv-rows'
 import { KeyValueTable } from './KeyValueTable'
 
 interface BodyProps {
@@ -81,6 +82,9 @@ export function BodyEditor({ spec, onChange }: BodyProps) {
   )
 }
 
+/** 草稿行的形状。只读：写的时候一律经 applyRowEdit 展开成新对象。 */
+const BLANK_MULTIPART: MultipartParam = { key: '', kind: 'text', value: '', enabled: true }
+
 function MultipartTable({
   rows,
   onChange
@@ -88,8 +92,11 @@ function MultipartTable({
   rows: MultipartParam[]
   onChange: (rows: MultipartParam[]) => void
 }) {
+  // 与键值表同一套草稿行算术。只看 key/value：只填了 filename 没填字段名的行本来就还不完整，
+  // 代价是这种半截行当下不会被再补一行空白，补齐字段名后下一格才长出草稿行
+  const body: MultipartParam[] = needsDraftRow(rows) ? [...rows, BLANK_MULTIPART] : rows
   const set = (i: number, patch: Partial<MultipartParam>): void =>
-    onChange(rows.map((r, k) => (k === i ? { ...r, ...patch } : r)))
+    onChange(applyRowEdit(rows, i, BLANK_MULTIPART, patch))
 
   return (
     <div>
@@ -106,7 +113,7 @@ function MultipartTable({
           </tr>
         </thead>
         <tbody>
-          {rows.map((r, i) => (
+          {body.map((r, i) => (
             <tr key={i}>
               <td>
                 <input
@@ -117,7 +124,7 @@ function MultipartTable({
                 />
               </td>
               <td>
-                <input value={r.key} onChange={(e) => set(i, { key: e.target.value })} placeholder="filed" />
+                <input value={r.key} onChange={(e) => set(i, { key: e.target.value })} placeholder="file" />
               </td>
               <td>
                 <select
@@ -152,21 +159,17 @@ function MultipartTable({
                 />
               </td>
               <td>
-                <button className="mini" onClick={() => onChange(rows.filter((_, k) => k !== i))} title="删除">
-                  ✕
-                </button>
+                {/* 草稿行不在 rows 里，没有"删掉它"这回事：打字那一刻它才成为一行 */}
+                {i < rows.length && (
+                  <button className="mini" onClick={() => onChange(rows.filter((_, k) => k !== i))} title="删除">
+                    ✕
+                  </button>
+                )}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-      <button
-        className="mini"
-        style={{ marginTop: '0.4rem' }}
-        onClick={() => onChange([...rows, { key: '', kind: 'text', value: '', enabled: true }])}
-      >
-        ＋ 添加一项
-      </button>
     </div>
   )
 }

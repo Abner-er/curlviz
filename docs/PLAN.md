@@ -417,3 +417,43 @@ web **316 passed**（25 文件，269 → 316，新增 47 条：`lib/split.test.t
 `App.smoke.test.tsx` 12 → 14、`lib/display.test.ts` +1）；`vite build` 125 模块，
 `index-*.js` 274.20 kB / gzip 90.57，`index-*.css` 16.16 kB / gzip 4.01。
 `npm run build` 仍在本机 npm 层挂（errno -4094 write → `H:\npm-cache\_logs`），故全部读数直调 vite / vitest 入口。
+
+## 16. 末行常驻草稿行（M2.9.1，2026-10-27）
+
+需求原话："默认显示增加一行，不需要手动＋"。对着截图看更清楚：Query 页签下一张空表 + 一颗「＋ 添加一行」，
+用户想干的事就是"敲个参数名"，中间却隔了一次点击和一次找光标。
+
+旧代码的注释其实早就承诺了正确行为（"空行永远留在末尾：用户点'添加'后不该再去找光标在哪"），
+实现却是要先点按钮才有一行——**注释是对的方向，代码少做了一步**。
+
+| 决策 | 细节 | 为什么 |
+|---|---|---|
+| 草稿行**不进 state** | 渲染时 `needsDraftRow(rows) ? [...rows, BLANK] : rows`；编辑下标越界即"打在草稿上" → `applyRowEdit` 落成一条真记录 | 存进 state 就要处理"存了 3 条空记录"的脏数据：集合导出、导入、历史、计数全得各自记得过滤。合成行只有一处生成，判据只有一处 |
+| 判据只看 `key` 与 `value` 都空 | `needsDraftRow`：末行不存在、或 `key !== ''`、或 `value !== ''` → 需要补草稿 | `{key:'Accept', value:''}` 是 `-H 'Accept:'` = **删头**（M2.7 实测），是货真价实的数据；当草稿吃掉就是删用户的命令 |
+| 判据抽成纯函数 | `web/src/lib/kv-rows.ts`：`needsDraftRow` + `applyRowEdit`，组件只接线 | §10 / §12 / §14 / §15 一贯：会判错的东西必须能脱离 jsdom 单测。本轮 `applyRowEdit` 单测里专门钉了"不改动入参数组、不改动共享的 BLANK 常量" |
+| ✕ 只画真行 | 草稿行那格留空 | 它不在数据里，"删掉它"没有对应动作；一颗按了没反应的按钮比留空更容易被当成 bug（§15 发送菜单同一课） |
+| multipart 单独接线 | 七列形状与键值表差太远，逻辑照写一遍，另补 4 条 SSR 测试 | 复用不了就意味着会漂；`KeyValueTable` 的测试覆盖不到它，只能自己钉 |
+| 顺手修 placeholder | 字段名列 `filed` → `file` | `field` 的笔误，中文界面里挂个错词只会让人怀疑别处也有 |
+
+**真浏览器读数**（`_wip/draft_row.mjs`，headless Chrome + CDP；React 受控输入要原生 setter + `input` 事件才认）：
+
+| 步骤 | 表体读数 | 焦点 | 页签 / 命令 |
+|---|---|---|---|
+| 空表 | 1 行（key='' val=''，`del:false`） | 无 | `Query` / `curl ''` |
+| 末行敲 `trace` | 2 行：`trace` 带 ✕ + 新空白行不带 ✕ | 仍在第 0 行「名称」，值 = `trace` | `Query (1)` / 命令含 `trace=` |
+| 再敲 `trace2` | 仍是 2 行，没多长出一行 | 同一格 | `Query (1)` |
+| 空白行敲值 `abc` | 3 行：`trace2` / `''→abc` / 新草稿 | 移到值那一格 | 角标仍 `Query (1)`，命令仍只有 `?trace2=` |
+
+关键的一条是**焦点不掉、字不跳**：草稿行按数组下标渲染，一旦打字就变成真行，
+如果 key 用行内容或索引混着当 React key，输入框会被换掉、光标跑到行首。实测没有发生。
+
+**两条已知代价**（登记，不当 bug 修）：只填值不填参数名的行会成真数据（界面留着、生成时忽略，
+改之前"点＋再只填值"是同样结果）；只填了 filename 的半截 multipart 行当下不再补空白行，补齐字段名才长出草稿。
+
+**边界**：`CurlSpec` 与 fixtures 未动——草稿行压根不进数据模型，跨端契约看不见它。安卓端（M3）
+自己做编辑器时可以直接照这一节的判据，不必读 TS 组件。
+
+**本轮实测数字**：`tsc --noEmit -p web/tsconfig.json` 零错；core 350 passed + 1 skipped（未变）；
+web **334 passed**（25 → 27 文件，316 → 334，新增 18 条：`lib/kv-rows.test.ts` 10、
+`components/KeyValueTable.test.tsx` 4 → 8、`components/Editors.test.tsx` 4）；
+`vite build` 126 模块，`index-*.js` 274.18 kB / gzip 90.59，CSS 16.16 kB / gzip 4.01 未变。
