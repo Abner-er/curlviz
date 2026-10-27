@@ -51,9 +51,10 @@ npm run build && npm run preview --workspace @curlviz/web   # 看成品用，htt
 |---|---|
 | M0 契约 + 内核 | ✅ 79 条 fixture（47 条走完整往返）、core 350 个测试全绿，严格 TS 无错 |
 | M1 Web MVP | ✅ 导入/表单/双向转换/发送/响应预览/本地持久化，含首屏冒烟；`vite build` 通过 |
-| M2 Web 增强（集合/环境/历史/导入导出/分享） | ✅ 代码与测试完成（现状口径 web 269 + core 350，typecheck 干净，产物已实测可访问）；剩下浏览器里的人工验收 |
+| M2 Web 增强（集合/环境/历史/导入导出/分享） | ✅ 代码与测试完成（当时口径 web 269 + core 350，typecheck 干净，产物已实测可访问；最新读数看 M2.9 行）；剩下浏览器里的人工验收 |
 | M2.7 拿真实 curl 当裁判 | ✅ 45 条命令逐字节对拍 + 20 条书中命令进契约 + 4 处按实测改写；差异登记在 `spec/README.md` §10.1 |
 | M2.8 跨域预检判定 | ✅ 发送前提醒 + 失败定向 hint + headless Chrome 页面级探针；只动网页端，`CurlSpec` 与 fixtures 未变 |
+| M2.9 布局对齐 Postman | ✅ 三栏常驻（操作栏 / 工作台 / 可拖分隔条 / 结果）+ 分裂发送按钮；1024 宽下响应卡从视口外（y=1028）进到视口内，`CurlSpec` 与 fixtures 仍未变 |
 | M3 安卓 MVP | 未开始 |
 | M4 双端互通 + 本地 agent | 未开始 |
 
@@ -137,6 +138,46 @@ npm run build && npm run preview --workspace @curlviz/web   # 看成品用，htt
 - 本轮实测：typecheck 0 错，core 350 passed + 1 skip（不变），web **269 passed**（新增 29 条：
   `fetch-rules.test.ts` 16 条、`CurlPreview.test.tsx` 3 条、`http.test.ts` 6 条、`display.test.ts` 4 条），
   `vite build` 119 模块、产物 266.63 kB（gzip 87.52），CSS 11.08 kB 未变。
+
+## M2.9 布局对齐 Postman（2026-10-27）
+
+一句"看看布局，对齐 Postman，或者比它更方便"没法直接动工，所以先量再改：拿 headless Chrome + CDP
+把旧版在 1600 / 1280 / 1024 三档宽度下的真实盒模型打出来，拿到四个数——顶栏在 ≤1280 会换行成 98~108px 高、
+方法名那颗下拉占掉 352px 而 URL 也只有 352px、curl 卡 427~447px 高、**1024 宽时响应卡落在 y=1028**。
+最后那条是病根：按下「发送」，结果在视口外面，得滚一整屏才看得见。
+
+- **主结构改成三栏常驻**：左侧操作栏（新建 / 导入 / 集合 / 环境 / 导出 / 历史 / 分享，7 颗两字按钮）
+  + 工作台 + 可拖分隔条 + 结果栏。外壳 `height: 100dvh; overflow: hidden`，两栏各自内部滚动，
+  整页不再滚（实测 `pageScroll=false`、`overflowX=0`）。≥1100px 左右分，更窄切成上下分（同一根分隔条换方向），
+  响应永远在视口里：1600 / 1280 / 1024 三档实测 `respInView` 全 true。
+- **URL 拿回宽度**：方法名换成可自由输入的 combobox（`<input list>` + `<datalist>`，PROPFIND / REPORT 这类
+  合法方法直接打得进去），占位从 352px 降到 139px；URL 输入框 1600 档 572px、1280 档 393px、1024 上下档 677px。
+- **发送做成分裂按钮** `[发送][▾]`：主按钮走浏览器 fetch，▾ 里是「复制到终端」的几种形态
+  （当前引号 / 换一种引号 / 压成单行 / 只复制 URL）。跨域预检判定成立时按钮旁点亮「可能被预检拦」，
+  措辞只说"可能"——预检要不要发能算，对方答不答应不能算。菜单项按当前状态生成：
+  单行开关已经关着时就不给"压成单行"这一项（点了没反应的项比少一项更容易被当成 bug）。
+- **设置挪到它影响的东西旁边**：引号 POSIX/cmd.exe 与「多行」进「等价 curl」那一行，历史脱敏进历史卡标题行，
+  顶栏只剩标题 + 环境读数（实测 47px 一档，不再随行宽换行）。curl 预览折成一个 dock：
+  展开 641px、折起 135px（省 506px），折着时「复制到终端」仍在原位可点。
+- **分隔条键盘可用**：`role="separator"` + `aria-valuenow/valuetext`，方向键 5% 一档、Home/End 到边界、双击复位。
+  实测 0.56 → ArrowRight 0.61 → Home 0.28，工作台列宽跟着从 859.70px 变到 429.84px。
+  比例存进 `settings`（复用旧存储键，没加新键）。
+- **顺手抓到两个 CSS 层叠缺陷**（都是量出来的，不是看着像）：
+  ① `button.caret { background: transparent }`（集合树那个展开箭头）与 `button.primary` 同权重且排在后面，
+  把 ▾ 的底色刮掉而字色还留着 —— 实测对比度**浅色 1.00 / 深色 1.08**，一颗看不见的按钮。改成 `.send-caret`，
+  不靠"谁排在后面"活着，并在 `RequestBar.test.tsx` 里钉住类名不许回退。
+  ② 两条 `@media` 写在 `.rail` / `.splitter` 的基础规则**之前**，覆盖整个失效：600px 宽时操作栏仍是竖排、
+  每颗按钮 589px 宽（7 行），分隔条也没藏掉。把响应式块移到文件末尾，实测 600px 档变成一条 600×59 的横工具条。
+  ③ 顺带把 `pre.code` 的边框从 `--line` 提到 `--line-2`：浅色下 `--line` 对着 code-bg 只有 1.17，等于没有边。
+- **不算缺陷的一处取舍**：600px 以下（含半屏分屏）外壳退回整页滚，此时 `respInView=false` 是设计如此 ——
+  那么窄还切两截各自滚，两截都看不清。
+- **本轮明确不做**（属于下一轮）：多请求文档 tab、左侧 Postman 式全量对齐、发送键旁边的"存到集合"
+  （要先有目标集合选择器 = 新弹窗新状态）、手动主题开关。
+- 本轮实测：typecheck 0 错，core 350 passed + 1 skip（不变），web **316 passed**（269 → 316，新增 47 条：
+  `lib/split.test.ts` 14、`components/RequestBar.test.tsx` 10、`lib/send-actions.test.ts` 8、
+  `components/Rail.test.tsx` 5、`CurlPreview.test.tsx` 3 → 10、`App.smoke.test.tsx` 12 → 14、`display.test.ts` +1），
+  `vite build` 125 模块、产物 274.20 kB（gzip 90.57）、CSS 16.16 kB（gzip 4.01）。
+  布局与对比度两份探针在 `_wip/layout_shot.mjs`、`_wip/contrast_live.mjs`（gitignore，不入库）。
 
 ## M1 在浏览器里做不到的事（不是 bug，是 fetch 的语义边界）
 

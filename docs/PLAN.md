@@ -361,3 +361,59 @@ WCAG 相对亮度比（早先那版脚本把色值抄在自己身上，CSS 一�
 （7 文件，未变）、web **269 passed**（21 文件，新增 29 条：`fetch-rules.test.ts` 16、`http.test.ts` +6、
 `display.test.ts` +4、`CurlPreview.test.tsx` 3）；`npm run build` 119 模块，`index-*.js` 266.63 kB / gzip 87.52，
 CSS 11.08 kB / gzip 3.12 未变。
+
+## 15. 布局对齐 Postman（M2.9，2026-10-27）
+
+需求原话是"再看看页面布局，对齐 postman，或者要比他更方便"。这句话没法直接动工——"方便"不是像素属性，
+是"少一次滚动、少一次找"。所以先量：headless Chrome + CDP 把旧版在 1600 / 1280 / 1024 三档下的真实盒模型打出来。
+
+| 改前实测（旧版） | 读数 |
+|---|---|
+| 顶栏在 ≤1280 换行 | 高度从 56px 涨到 98~108px，吃掉首屏最贵的一档 |
+| 方法名那颗 `<select>` | 占 352px，而 URL 输入框也只有 352px（同一行里下拉比它要长的字段抢走一半） |
+| 「等价 curl」卡 | 427~447px 高，且不可折 |
+| **1024 宽时响应卡位置** | **y=1028**，视口 900 高——按下发送，结果在屏幕外面 |
+
+第四条决定了这一轮的性质：不是"美化"，是把**主路径**（改命令 → 发送 → 看结果）拉回同一屏。
+
+| 决策 | 细节 | 为什么 |
+|---|---|---|
+| 三栏常驻 | 操作栏（7 颗两字按钮）+ 工作台 + 可拖分隔条 + 结果栏；外壳 `100dvh` + `overflow:hidden`，两栏各自内部滚动 | 整页滚动是"结果在视口外"的成因；抽屉默认关着的那扇门用常驻操作栏补回来 |
+| ≥1100 左右分，更窄上下分 | 同一根分隔条换方向；断点数字在 CSS `@media` 与 `App.tsx` 的 `SPLIT_BREAKPOINT` 各写一份 | JS 要知道往哪个方向算比例，只能读 matchMedia；两处同一个数，注释互指 |
+| 栏宽存 `settings` | 复用已有存储键加 `splitRatio` / `curlOpen`，不新增键 | 一次拖动就改的是"我这台机器的偏好"，不是数据 |
+| 比例算术进 lib | `lib/split.ts`：`clampSplit`（非有限值回默认，NaN 会把 grid 整体压没）、`splitFromPointer`、`stepSplit`、`orientationFor`；hook 只管指针与焦点 | 会算错的东西必须能脱离 DOM 单测（§10、§12、§14 同一贯法） |
+| 分隔条键盘可用 | `role="separator"` + `aria-valuenow/min/max/valuetext`，方向键 5% 一档、Home/End 到边界、双击复位 | 只用鼠标能拖的条，键盘用户永远调不了栏宽 |
+| 方法名改 combobox | `<input list>` + `<datalist>`，输入时 `trim().toUpperCase()`，空值回 `GET` | 下拉列不出 PROPFIND / REPORT 这些合法方法；同时把 213px 还给 URL |
+| 发送做分裂按钮 | `[发送][▾]`，▾ 里是「复制到终端」的四种形态；菜单项由 `lib/send-actions.ts` 按当前状态生成 | 浏览器直发与复制到终端是同一件事的两条路，并排放才不用猜；单行开关关着时不给"压成单行"那项——点了没反应的项比少一项更容易被当成 bug |
+| 徽标只说能算的 | 预检判定成立时点亮「可能被预检拦」，措辞留"可能" | §14 的边界：要不要发预检能算，对方答不答应不能算 |
+| 设置就近 | 引号 / 多行进 curl dock，脱敏进历史卡标题行，顶栏只剩标题 + 环境读数 | 三个全局开关摊在顶栏，看不出各自动了谁；挪到被影响的东西旁边才算说清因果 |
+| curl 预览折成 dock | 展开 641px / 折起 135px（省 506px），折着时「复制到终端」仍在 | 上一轮"命令要跟编辑器同屏"的结论不变，但它可以按需展开 |
+| 计数徽章 0 不画 | `countBadge()`；**例外**：环境那格保留 0 | 一列按钮挂三个"0"读起来像坏了；而"环境选中了却 0 个变量"正是 `{{变量}}` 没被替换的直接原因，那个 0 有信息量 |
+
+**抓到两个 CSS 层叠缺陷（都是量出来的，不是看着像）**：
+
+1. `button.caret { background: transparent }`（集合树的展开箭头）与 `button.primary { background: var(--accent) }`
+   同权重且排在后面 → 分裂按钮那颗 ▾ 底色被刮掉、字色还留着。`_wip/contrast_live.mjs` 实测对比度
+   **浅色 1.00 / 深色 1.08**：一颗看不见的按钮。改类名 `.send-caret`，并在 `RequestBar.test.tsx` 里钉住不许回退
+   （CSS 层叠测不出来，只能钉类名）。
+2. 两条 `@media` 写在 `.rail` / `.splitter` 的基础规则**之前**，同权重下整个失效：600px 宽时操作栏仍是竖排、
+   每颗按钮 589px 宽（7 行），分隔条也没藏掉。把响应式块移到文件末尾，实测 600px 档变成一条 600×59 的横工具条。
+
+   两条合起来是同一课：**这一轮的样式表里，"谁排在后面"就是语义**，所以新增控件不复用已有类名，
+   响应式覆盖一律排在所有基础规则之后。顺带把 `pre.code` 边框从 `--line` 提到 `--line-2`
+   （浅色下 `--line` 对着 code-bg 只有 1.17，等于没有边；改后 1.40）。
+
+**探针读数的坑（登记，免得下次当成结论）**：`_wip/layout_shot.mjs` 的键盘与折叠两项探针原本跑在截图循环之后，
+而循环最后一档是 600px 手机档——分隔条在那里本就该 `display:none`，`focus()` 静默失败，`active1` 是假读数。
+补一句切回 1600×1000 之后才有：0.56 → ArrowRight 0.61 → Home 0.28，工作台列宽 859.70px → 429.84px。
+同理 `respInView` 在 600px 档是 false，那是设计如此（极窄退回整页滚），不是回归。
+
+**边界**：`CurlSpec` 一个字段没动，`spec/` 契约与 fixtures 不受影响；状态模型也没动（本轮明确不做多请求文档 tab、
+发送键旁的"存到集合"要先有目标集合选择器 = 新弹窗新状态、手动主题开关）。
+
+**本轮实测数字**：`tsc --noEmit -p web/tsconfig.json` 零错；core 350 passed + 1 skipped（7 文件，未变）；
+web **316 passed**（25 文件，269 → 316，新增 47 条：`lib/split.test.ts` 14、`components/RequestBar.test.tsx` 10、
+`lib/send-actions.test.ts` 8、`components/Rail.test.tsx` 5、`CurlPreview.test.tsx` 3 → 10、
+`App.smoke.test.tsx` 12 → 14、`lib/display.test.ts` +1）；`vite build` 125 模块，
+`index-*.js` 274.20 kB / gzip 90.57，`index-*.css` 16.16 kB / gzip 4.01。
+`npm run build` 仍在本机 npm 层挂（errno -4094 write → `H:\npm-cache\_logs`），故全部读数直调 vite / vitest 入口。
