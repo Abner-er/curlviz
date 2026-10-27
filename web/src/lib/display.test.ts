@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { createDefaultSpec, type CurlSpec, type Param } from '@curlviz/core'
 import {
+  currentPageHref,
   extOf,
   headerRowNote,
   historySummary,
   prefersReducedMotion,
+  preSendNotices,
   queryRowNote,
   scrollBehaviorFor,
   suggestName,
@@ -94,6 +96,33 @@ describe('跳转滚动该不该平滑', () => {
     // 这条测的正是"测试环境里没有 window"这个事实：抽屉的跳转 effect 要调它，
     // 它一抛错，那三颗跳转按钮就变成点了没反应的那种最难发现的坏
     expect(prefersReducedMotion()).toBe(false)
+  })
+})
+
+describe('preSendNotices：发送前的提醒', () => {
+  function specWithUrl(url: string): CurlSpec {
+    return { ...createDefaultSpec('n'), url, method: 'POST', headers: [{ key: 'Content-Type', value: 'application/json', enabled: true }] }
+  }
+
+  it('URL 里写着 {{host}} 时，变量得先替换再判 origin —— 否则这条最该提醒的命令会被判成"没风险"', () => {
+    const spec = specWithUrl('{{host}}/v1/chat/completions')
+    const withVar = preSendNotices(spec, { host: 'https://api.example.com' }, 'http://localhost:5183/')
+    expect(withVar).toHaveLength(1)
+    expect(withVar[0]).toContain('https://api.example.com')
+    expect(withVar[0]).toContain('Content-Type: application/json')
+  })
+
+  it('变量没赋值时 URL 还没成形：判不出来就沉默，不凭空提醒', () => {
+    expect(preSendNotices(specWithUrl('{{host}}/v1/chat'), {}, 'http://localhost:5183/')).toEqual([])
+  })
+
+  it('同源不给提醒；页面地址取不到（node 测试环境 / SSR）也不给', () => {
+    expect(preSendNotices(specWithUrl('http://localhost:5183/v1/chat'), {}, 'http://localhost:5183/')).toEqual([])
+    expect(preSendNotices(specWithUrl('https://api.example.com/v1/chat'), {}, '')).toEqual([])
+  })
+
+  it('currentPageHref：没有 location 就返回空串，不抛错', () => {
+    expect(currentPageHref()).toBe('')
   })
 })
 

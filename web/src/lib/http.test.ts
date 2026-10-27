@@ -210,6 +210,46 @@ describe('buildRequest', () => {
     s.url = 'https://in.example.com/api/ping'
     expect(buildRequest(s, {}, 'https://tool.example.com/app/').url).toBe('https://in.example.com/api/ping?x=1')
   })
+
+  it('给了页面地址且目标跨域：发送前就把预检提醒写在 notes 里，并点名触发项', () => {
+    const s = spec()
+    s.url = 'https://token.sensenova.cn/v1/chat/completions'
+    s.method = 'POST'
+    s.headers = [param('Content-Type', 'application/json')]
+    const notes = buildRequest(s, {}, 'http://localhost:5183/').notes
+    const corsNote = notes.find((n) => n.includes('跨域'))
+    expect(corsNote).toBeDefined()
+    expect(corsNote).toContain('OPTIONS 预检')
+    expect(corsNote).toContain('Content-Type: application/json')
+  })
+
+  it('同源不给跨域提醒；简单请求给的是"发得出但可能读不到"那一句', () => {
+    const same = spec()
+    same.url = 'http://localhost:5183/api/ping'
+    expect(buildRequest(same, {}, 'http://localhost:5183/').notes.join()).not.toContain('跨域')
+
+    const simple = spec()
+    simple.url = 'https://api.example.com/ping'
+    const note = buildRequest(simple, {}, 'http://localhost:5183/').notes.find((n) => n.includes('跨域'))
+    expect(note).toContain('简单请求')
+    expect(note).not.toContain('OPTIONS 预检')
+  })
+
+  it('-A 与跨域同时命中时只说一遍：user-agent 作为触发点写在跨域那条里，不再单独立一条', () => {
+    const s = spec()
+    s.url = 'https://api.example.com/p'
+    s.options = { ...s.options, userAgent: 'ops-cli/1.0' }
+    const notes = buildRequest(s, {}, 'http://localhost:5183/').notes
+    expect(notes.filter((n) => n.includes('user-agent'))).toHaveLength(1)
+    expect(notes.some((n) => n.startsWith('设置 -A 会让跨域请求多一次'))).toBe(false)
+  })
+
+  it('页面地址取不到（base 为空）时，-A 那句假设性提醒仍要保留——那是此刻唯一能给的线索', () => {
+    const s = spec()
+    s.url = 'https://api.example.com/p'
+    s.options = { ...s.options, userAgent: 'ops-cli/1.0' }
+    expect(buildRequest(s).notes.join()).toContain('设置 -A 会让跨域请求多一次')
+  })
 })
 
 describe('sendSpec', () => {
@@ -282,6 +322,45 @@ describe('sendSpec', () => {
     expect(report.outcome.failure.kind).toBe('blocked-or-network')
     expect(report.outcome.failure.hint).toContain('F12')
     expect(report.outcome.failure.raw).toContain('Failed to fetch')
+  })
+
+  it('目标跨域且要预检时，失败 hint 直接对上浏览器控制台那句原话', async () => {
+    const s = spec()
+    s.url = 'https://token.sensenova.cn/v1/chat/completions'
+    s.method = 'POST'
+    s.headers = [param('Content-Type', 'application/json')]
+    s.options = { ...s.options, timeoutMs: 0 }
+    const report = await sendSpec(s, {
+      pageBase: 'http://localhost:5183/',
+      now: metronome(0, 1, 1),
+      fetchImpl: (async () => {
+        throw new TypeError('Failed to fetch')
+      }) as unknown as typeof fetch
+    })
+    if (report.outcome.ok) throw new Error('本该失败')
+    const hint = report.outcome.failure.hint
+    expect(hint).toContain("doesn't pass access control check")
+    expect(hint).toContain('HTTP ok status')
+    expect(hint).toContain('Content-Type: application/json')
+    expect(hint).toContain('复制到终端')
+    // 发送前的提醒也已经在 notes 里，用户不必等到失败才知道要预检
+    expect(report.notes.join()).toContain('OPTIONS 预检')
+  })
+
+  it('同源却 fetch 失败：hint 仍是那句"分不清"，不硬编成 CORS', async () => {
+    const s = spec()
+    s.url = 'http://localhost:5183/api/ping'
+    s.options = { ...s.options, timeoutMs: 0 }
+    const report = await sendSpec(s, {
+      pageBase: 'http://localhost:5183/',
+      now: metronome(0, 1, 1),
+      fetchImpl: (async () => {
+        throw new TypeError('Failed to fetch')
+      }) as unknown as typeof fetch
+    })
+    if (report.outcome.ok) throw new Error('本该失败')
+    expect(report.outcome.failure.hint).toContain('分不清')
+    expect(report.outcome.failure.hint).not.toContain('sensenova')
   })
 
   it('外部取消：区分 abort 与网络失败', async () => {

@@ -1,4 +1,5 @@
-import { extractVars, type CurlSpec, type Param } from '@curlviz/core'
+import { extractVars, resolveSpec, type CurlSpec, type Param, type VarMap } from '@curlviz/core'
+import { assessCors, corsPreSendNotice } from './fetch-rules'
 import type { HistoryEntry } from '../types'
 
 /**
@@ -11,6 +12,25 @@ import type { HistoryEntry } from '../types'
 export interface RowNote {
   text: string
   title: string
+}
+
+/**
+ * 当前页面地址。取不到（SSR 冒烟测试 / node 测试环境）就返回空串，
+ * 而空串会让跨域判定直接返回 null —— 判不出来时保持沉默，比猜一个 origin 更诚实。
+ */
+export function currentPageHref(): string {
+  return globalThis.location?.href ?? ''
+}
+
+/**
+ * 发送前就该看见的提醒。目前只有跨域预检一条，但判据留在 lib：组件只画结果。
+ *
+ * 先跑一遍 `resolveSpec` 是必需的 —— URL 里写着 `{{host}}/v1/chat` 时 origin 根本解析不出来，
+ * 判成"没风险"，等于把最该提醒的那条命令漏掉。
+ */
+export function preSendNotices(spec: CurlSpec, vars: VarMap, pageHref: string): string[] {
+  const notice = corsPreSendNotice(assessCors(resolveSpec(spec, vars).spec, pageHref))
+  return notice === '' ? [] : [notice]
 }
 
 /**

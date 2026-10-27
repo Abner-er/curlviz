@@ -8,6 +8,7 @@ import {
   type VarMap
 } from '@curlviz/core'
 import type { Param2, SendReport, SentResponse } from '../types'
+import { assessCors, corsFailureHint, corsPreSendNotice, FORBIDDEN_REQUEST_HEADERS } from './fetch-rules'
 import { classifyBody, decodeBody, MAX_PREVIEW_BYTES, truncateBytes } from './response'
 
 const MAX_LIMIT = MAX_PREVIEW_BYTES
@@ -26,30 +27,9 @@ const SAFELISTED_RESPONSE_HEADERS = [
  * fetch 会静默丢弃的头（Fetch 标准的 forbidden header name 列表）。
  * 不写出来的话，用户会以为自己的 Cookie / Host 发出去了，实际没有——这类"看着对其实没发"
  * 是最坑的，必须显式列出来告诉用户。
+ * 表本体在 lib/fetch-rules.ts：那边算"会不会触发预检"要用同一份清单（被丢弃的头不上线，
+ * 也就不触发预检），两处各写一份迟早会漂。
  */
-const FORBIDDEN_REQUEST_HEADERS = new Set([
-  'accept-charset',
-  'accept-encoding',
-  'access-control-request-headers',
-  'access-control-request-method',
-  'connection',
-  'content-length',
-  'cookie',
-  'cookie2',
-  'date',
-  'dnt',
-  'expect',
-  'host',
-  'keep-alive',
-  'origin',
-  'posture',
-  'referer',
-  'te',
-  'trailer',
-  'transfer-encoding',
-  'upgrade',
-  'proxy-connection'
-])
 
 export interface SendDeps {
   vars?: VarMap
@@ -102,10 +82,11 @@ export function buildRequest(
     if (spec.auth.bearer.token.trim() !== '') push('Authorization', `Bearer ${spec.auth.bearer.token}`)
   }
 
+  let uaPreflightPending = false
   if (spec.options.userAgent.trim() !== '') {
     // User-Agent 不在 forbidden 列表里，能设；但会让跨域请求多一次预检
     push('User-Agent', spec.options.userAgent)
-    notes.push('设置 -A 会让跨域请求多一次 OPTIONS 预检，对方服务没处理预检就会失败。')
+    uaPreflightPending = true
   }
 
   const bodyResult = buildBody(spec, push)
@@ -146,6 +127,16 @@ export function buildRequest(
       `其中 ${viaUrlQuery.length} 项来自 --url-query：浏览器发送只能把它们折进 URL，编码用 encodeURIComponent` +
         '（空格编成 %20）；而 curl 自己的表把空格编成 +、! 编成 %21。复制到终端的那条仍然逐条写 --url-query，由 curl 编码。'
     )
+  }
+
+  // 第四条：跨域。预检要不要发是能算的（Fetch 标准），对方答不答应不能算——文案只说前者，别冒充后者。
+  const corsRisk = assessCors(spec, base)
+  const corsNote = corsPreSendNotice(corsRisk)
+  if (corsNote !== '') notes.push(corsNote)
+  // 跨域判定成立时，user-agent 已经作为触发点写进上面那条了，这里不再重复；
+  // 只在"同源 / base 取不到"（也就是判定帮不上忙）时，才补一句假设性的提醒。
+  if (uaPreflightPending && corsRisk === null) {
+    notes.push('设置 -A 会让跨域请求多一次 OPTIONS 预检，对方服务没处理预检就会失败。')
   }
 
   return {
@@ -377,7 +368,7 @@ export async function sendSpec(
           : {
               kind: 'blocked-or-network' as const,
               message: '请求没能完成。',
-              hint: '浏览器只报"fetch 失败"，分不清是被 CORS 拦了、服务不通、还是证书不受信。' + '先按 F12 看 Network 里这条是 CORS 报错还是连接错误；对方没有 CORS 头时请用「复制到终端」或本地 agent 发送。',
+              hint: corsFailureHint(assessCors(resolved.spec, pageBase)),
               raw: message
             }
     return {

@@ -8,7 +8,7 @@ import { applySharePayload, loadBootState } from './lib/bootstrap'
 import { entryForEditor } from './lib/history'
 import { importCurlText } from './lib/imports'
 import { shiftTab } from './lib/tabs'
-import { headerRowNote, prefersReducedMotion, queryRowNote, scrollBehaviorFor } from './lib/display'
+import { currentPageHref, headerRowNote, prefersReducedMotion, preSendNotices, queryRowNote, scrollBehaviorFor } from './lib/display'
 import { usePersistence } from './hooks/usePersistence'
 import { useWorkbench } from './hooks/useWorkbench'
 import { useSend } from './hooks/useSend'
@@ -63,6 +63,13 @@ export function App() {
 
   // 这次生效的变量表：激活环境优先，其它环境兜底（语义来自 core 的 toVarMap）
   const vars = useMemo(() => varsFor(envState), [envState])
+
+  /*
+   * 发送前就该看见的提醒（现在是跨域预检那一条）。判据不在这里，在 lib/display + lib/fetch-rules：
+   * App 只负责把结果递给 curl 预览区。页面地址在本地是 http://localhost:5183，
+   * 目标却常常是内网另一台机器或公网 API —— 那就跨域，浏览器说了算的部分得先说清楚。
+   */
+  const preNotices = useMemo(() => preSendNotices(wb.spec, vars, currentPageHref()), [wb.spec, vars])
 
   const sender = useSend({
     spec: wb.spec,
@@ -432,6 +439,7 @@ export function App() {
           <CurlPreview
             curl={curl}
             warnings={wb.warnings}
+            preNotices={preNotices}
             quoteStyle={settings.quoteStyle}
             onFixQuoteStyle={() => setSettings({ ...settings, quoteStyle: 'windows' })}
           />

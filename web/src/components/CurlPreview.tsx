@@ -5,6 +5,11 @@ import { copyText } from '../lib/clipboard'
 interface Props {
   curl: string
   warnings: ParseWarning[]
+  /**
+   * 发送前就该看见的提醒（跨域预检是其中一条）。放这里而不是等点完发送才在结果区冒出来：
+   * 预检被拦时命令本身没错，让人白点一次发送、再去翻控制台，不如提前一句话说清"浏览器这条路不通"。
+   */
+  preNotices?: string[]
   /** 目标终端是 Windows 时提示引号风格，POSIX 引号粘进 cmd.exe 就是坏命令。 */
   quoteStyle: 'posix' | 'windows'
   onFixQuoteStyle: () => void
@@ -20,7 +25,7 @@ const WARNING_LABEL: Record<ParseWarning['code'], string> = {
   'flag-conflict': 'flag 语义冲突'
 }
 
-export function CurlPreview({ curl, warnings, quoteStyle, onFixQuoteStyle }: Props) {
+export function CurlPreview({ curl, warnings, preNotices = [], quoteStyle, onFixQuoteStyle }: Props) {
   const [toast, setToast] = useState('')
   const lines = useMemo(() => curl.split('\n').length, [curl])
 
@@ -46,12 +51,16 @@ export function CurlPreview({ curl, warnings, quoteStyle, onFixQuoteStyle }: Pro
         <span className="muted">引号风格：{quoteStyle === 'windows' ? 'Windows（双引号）' : 'POSIX（单引号）'}</span>
       </div>
 
-      {warnings.length > 0 && (
+      {(warnings.length > 0 || preNotices.length > 0) && (
+        /* 合成一个列表：两个外观相同的 ul.notes 上下叠着，看着像组件画重了 */
         <ul className="notes">
           {warnings.map((w, i) => (
-            <li key={i}>
+            <li key={`w${i}`}>
               <b>{WARNING_LABEL[w.code] ?? w.code}</b>：{w.message}
             </li>
+          ))}
+          {preNotices.map((n, i) => (
+            <li key={`p${i}`}>{n}</li>
           ))}
         </ul>
       )}
