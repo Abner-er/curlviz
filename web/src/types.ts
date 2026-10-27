@@ -76,6 +76,10 @@ export interface Settings {
   multiline: boolean
   /** 历史与导出默认脱敏 Authorization / Cookie。 */
   redactHistory: boolean
+  /** 「等价 curl」这块展开还是折成一条。长命令比响应区还占地方，所以给折叠，但状态要记住。 */
+  curlOpen: boolean
+  /** 工作台 : 结果 的宽度比例（0.28~0.78）。拖完松手才写，见 hooks/useSplit。 */
+  splitRatio: number
 }
 
 export interface HistoryEntry {

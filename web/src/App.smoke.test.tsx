@@ -22,13 +22,20 @@ function firstPaint(): string {
  * 不想为它多养一个 DOM 依赖。交互与副作用由 lib 里那些纯函数测试负责。
  */
 describe('App 首屏', () => {
-  it('渲染出不报错，四个区块都在', () => {
+  it('渲染出不报错，五块内容都在', () => {
     const html = firstPaint()
     expect(html).toContain('CurlViz')
-    expect(html).toContain('<h2>请求</h2>')
-    expect(html).toContain('粘贴 curl 导入')
+    // 请求卡的标题就是那条请求的名字（不再有"请求"这个空标题占一行）
+    expect(html).toContain('aria-label="请求名称"')
+    expect(html).toContain('等价 curl')
     expect(html).toContain('<h2>响应</h2>')
     expect(html).toContain('只存这台机器')
+  })
+
+  it('左侧操作栏把五个入口常驻顶着：粘贴导入不再占请求卡那一行，但也不能只剩抽屉里那份', () => {
+    const html = firstPaint()
+    expect(html).toContain('class="rail"')
+    for (const label of ['新建', '导入', '集合', '环境', '导出', '历史', '分享']) expect(html).toContain(label)
   })
 
   it('首屏没有响应时给的是"还没发过"，不是崩或空白', () => {
@@ -36,10 +43,13 @@ describe('App 首屏', () => {
     expect(html).toContain('还没发过')
   })
 
-  it('引号与多行开关默认态可见（Windows 用户必须能找到切换入口）', () => {
+  it('引号与多行开关默认态可见（Windows 用户必须能找到切换入口），且就长在命令旁边', () => {
     const html = firstPaint()
     expect(html).toContain('多行')
-    expect(html).toContain('Windows 引号')
+    expect(html).toContain('cmd.exe')
+    expect(html).toContain('POSIX')
+    // 挪进 curl dock 这一行才算"改哪个看哪个"：整页里它必须出现在「等价 curl」之后
+    expect(html.indexOf('cmd.exe')).toBeGreaterThan(html.indexOf('等价 curl'))
   })
 
   it('没填 URL 时发送按钮禁用，并说明原因（不给一个点了没反应的按钮）', () => {
@@ -48,7 +58,7 @@ describe('App 首屏', () => {
     expect(html).toContain('填了 URL 才能发送')
   })
 
-  it('首屏不开抽屉：库的内容不在这儿，但顶栏要看得见"有没有库、现在哪个环境"', () => {
+  it('首屏不开抽屉：库的内容不在这儿，但操作栏要看得见"有没有库、库里几条"', () => {
     const html = firstPaint()
     // 抽屉与两个弹窗都是 portal 到 body 的，服务端渲染器不认 portal：
     // 它们出现在首屏渲染里就是白屏事故，所以这条 not 比 toContain 更要紧
@@ -56,9 +66,14 @@ describe('App 首屏', () => {
     expect(html).not.toContain('class="drawer"')
     // 按钮标签首屏就有（那是入口），框本身不该有：这条钉的是"打开才挂载"
     expect(html).not.toContain('aria-label="curl 命令原文"')
-    // 库收起来之后，"这里有个库、库里有多少东西"只剩这一处可见线索
-    expect(html).toContain('资料库')
-    expect(html).toContain('0 集合 · 0 请求')
+    // 库收起来之后，"这里有没有东西"由操作栏那枚徽章负责说 —— 但空库不配占一个视觉位置：
+    // 一列按钮挂三个"0"读起来像界面坏了。这条钉的是 lib 的 countBadge 真在 App 里被用上，
+    // 而不只是它自己的单测里自洽
+    expect(html).toContain('aria-label="集合"')
+    expect(html).not.toContain('集合（0）')
+    expect(html).toContain('aria-label="历史"')
+    // 例外：环境选中了却一个变量都没有，正是 {{变量}} 没被替换的直接原因，这个 0 有信息量
+    expect(html).toContain('aria-label="环境（0）"')
     // 环境读数在顶栏。开机默认就是那个初始环境，不是"未启用"——
     // 未启用是用户手动选了「不启用环境」之后的状态
     expect(html).toContain(`环境 · ${DEFAULT_ENV_NAME}`)
@@ -69,29 +84,40 @@ describe('App 首屏', () => {
 })
 
 /**
- * 两栏 shell + 右侧抽屉是这一轮界面结论本身，不是实现细节：
- * 布局一旦飘回"资料库占住左边一整列"，工作区就没了一整页宽度，
+ * 三栏外壳（操作栏 / 工作台 / 结果）与可拖分隔条是这一轮界面结论本身，不是实现细节：
+ * 布局一旦飘回"资料库占住一整列"或"顶栏再塞六个控件"，工作区与首屏高度就没了，
  * 而这类退化看着仍是同一个界面，人工点验最容易放过去。
  */
-describe('两栏 shell 与资料库抽屉', () => {
-  it('左栏不再占位：工作台 / 结果两栏，资料库那一列不许回来', () => {
+describe('三栏 shell 与可拖分隔条', () => {
+  it('操作栏常驻 + 工作台 + 分隔条 + 结果栏，资料库那一列不许回来', () => {
     const html = firstPaint()
     expect(html).not.toContain('class="shell-lib"')
-    expect(html).toContain('class="shell-work"')
-    expect(html).toContain('class="shell-result"')
-    // 库还在，只是换成了顶栏叫出来的抽屉
-    expect(html).toContain('资料库')
+    expect(html).toContain('class="rail"')
+    expect(html).toContain('class="col-work"')
+    expect(html).toContain('class="col-result"')
+    // 分隔条带 role="separator"：只用鼠标能拖的条，键盘用户就永远调不了栏宽
+    expect(html).toContain('role="separator"')
+    expect(html).toContain('aria-valuenow')
+  })
+
+  it('顶栏瘦回一行：三个设置控件都挪到各自影响的地方去了，栏里不该再有下拉与勾选框', () => {
+    const header = /<header class="top">[\s\S]*?<\/header>/.exec(firstPaint())?.[0] ?? ''
+    expect(header).not.toContain('<select')
+    expect(header).not.toContain('type="checkbox"')
+    expect(header).toContain('env-chip')
   })
 
   it('curl 预览跟在工作台里、且在响应区之前（改一个参数要立刻看到命令怎么变）', () => {
     const html = firstPaint()
-    const work = html.indexOf('class="shell-work"')
-    const result = html.indexOf('class="shell-result"')
+    const work = html.indexOf('class="col-work"')
+    const splitter = html.indexOf('role="separator"')
+    const result = html.indexOf('class="col-result"')
     const preview = html.indexOf('等价 curl')
     const response = html.indexOf('<h2>响应</h2>')
     expect(work).toBeGreaterThan(-1)
     expect(preview).toBeGreaterThan(work)
-    expect(preview).toBeLessThan(result)
+    expect(preview).toBeLessThan(splitter)
+    expect(splitter).toBeLessThan(result)
     expect(response).toBeGreaterThan(result)
   })
 

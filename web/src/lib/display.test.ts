@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createDefaultSpec, type CurlSpec, type Param } from '@curlviz/core'
 import {
+  countBadge,
   currentPageHref,
   extOf,
   headerRowNote,
@@ -144,5 +145,15 @@ describe('表格某一行的语义胶囊', () => {
     expect(headerRowNote(p({ key: '', value: '' }))).toBeNull()
     // 文案里必须带着实测那句"不是发空值头"，这是用户最容易误解的一点
     expect(headerRowNote(p({ value: '' }))?.title).toContain('不是发一个空值头')
+  })
+})
+
+describe('操作栏的计数徽章', () => {
+  it('0 不画：一列按钮挂三个"0"读起来像界面坏了', () => {
+    expect(countBadge(0)).toBeUndefined()
+    expect(countBadge(1)).toBe('1')
+    expect(countBadge(24)).toBe('24')
+    // 负数不该冒出来（计数只可能 >= 0），真冒出来了就是不画，而不是显示一个看不懂的 -1
+    expect(countBadge(-1)).toBeUndefined()
   })
 })

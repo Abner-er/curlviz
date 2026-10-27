@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import type { ParseWarning } from '@curlviz/core'
+import type { ParseWarning, QuoteStyle } from '@curlviz/core'
 import { copyText } from '../lib/clipboard'
 
 interface Props {
@@ -11,8 +11,13 @@ interface Props {
    */
   preNotices?: string[]
   /** 目标终端是 Windows 时提示引号风格，POSIX 引号粘进 cmd.exe 就是坏命令。 */
-  quoteStyle: 'posix' | 'windows'
-  onFixQuoteStyle: () => void
+  quoteStyle: QuoteStyle
+  multiline: boolean
+  onQuoteStyle: (style: QuoteStyle) => void
+  onMultiline: (value: boolean) => void
+  /** 折叠状态由外面管（要持久化），这里只画。 */
+  open: boolean
+  onToggle: (open: boolean) => void
 }
 
 const WARNING_LABEL: Record<ParseWarning['code'], string> = {
@@ -25,9 +30,27 @@ const WARNING_LABEL: Record<ParseWarning['code'], string> = {
   'flag-conflict': 'flag 语义冲突'
 }
 
-export function CurlPreview({ curl, warnings, preNotices = [], quoteStyle, onFixQuoteStyle }: Props) {
+/**
+ * 等价 curl：这个工具的"另一半输出"。
+ *
+ * 做成可折叠的 dock 而不是无限长的卡片：10 行的命令就要 427px 高（实测），
+ * 比响应区还占地方，而它多数时候只是"扫一眼对不对"。
+ * 折叠后仍留着「复制到终端」与提醒计数——收起正文不该把主动作也收走。
+ */
+export function CurlPreview({
+  curl,
+  warnings,
+  preNotices = [],
+  quoteStyle,
+  multiline,
+  onQuoteStyle,
+  onMultiline,
+  open,
+  onToggle
+}: Props) {
   const [toast, setToast] = useState('')
   const lines = useMemo(() => curl.split('\n').length, [curl])
+  const noticeCount = warnings.length + preNotices.length
 
   const doCopy = async (): Promise<void> => {
     const ok = await copyText(curl)
@@ -36,22 +59,61 @@ export function CurlPreview({ curl, warnings, preNotices = [], quoteStyle, onFix
   }
 
   return (
-    <section className="card">
-      <h2>等价 curl（{lines} 行）</h2>
-      <pre className="code">{curl}</pre>
-      <div className="row" style={{ marginTop: '0.5rem' }}>
-        <button className="primary" onClick={doCopy}>
-          复制到终端
+    <section className="card curl-dock">
+      <div className="dock-head">
+        <button type="button" className="dock-toggle" aria-expanded={open} aria-controls="curl-body" onClick={() => onToggle(!open)}>
+          <span className="caret" aria-hidden="true">
+            {open ? '▾' : '▸'}
+          </span>
+          等价 curl（{lines} 行）
         </button>
-        {quoteStyle === 'posix' && /["']/.test(curl) && (
-          <button className="mini" onClick={onFixQuoteStyle} title="cmd.exe 不认 '\\'' 这套 shell 引号">
-            在 cmd.exe 里跑不通？切 Windows 引号
+
+        {!open && noticeCount > 0 && (
+          // 折叠时提醒不能跟着消失，否则"收起"就变成了"别看问题"
+          <button type="button" className="chip warn" onClick={() => onToggle(true)}>
+            {noticeCount} 条提醒
           </button>
         )}
-        <span className="muted">引号风格：{quoteStyle === 'windows' ? 'Windows（双引号）' : 'POSIX（单引号）'}</span>
+
+        <span className="grow" />
+
+        <div className="seg" role="group" aria-label="引号风格">
+          <button
+            type="button"
+            className="seg-btn"
+            aria-pressed={quoteStyle === 'posix'}
+            title="bash / Git-Bash / WSL / macOS 用单引号"
+            onClick={() => onQuoteStyle('posix')}
+          >
+            POSIX
+          </button>
+          <button
+            type="button"
+            className="seg-btn"
+            aria-pressed={quoteStyle === 'windows'}
+            title="cmd.exe 不认 POSIX 那套 '\\'' 引号，粘过去就是坏命令"
+            onClick={() => onQuoteStyle('windows')}
+          >
+            cmd.exe
+          </button>
+        </div>
+        <label className="inline-chk" title="每行一个参数，带 \\ 续行；关掉就是一条单行命令">
+          <input type="checkbox" checked={multiline} onChange={(e) => onMultiline(e.target.checked)} />
+          多行
+        </label>
+
+        <button type="button" className="primary" onClick={() => void doCopy()}>
+          复制到终端
+        </button>
       </div>
 
-      {(warnings.length > 0 || preNotices.length > 0) && (
+      {open && (
+        <div id="curl-body" className="dock-body">
+          <pre className="code">{curl}</pre>
+        </div>
+      )}
+
+      {open && noticeCount > 0 && (
         /* 合成一个列表：两个外观相同的 ul.notes 上下叠着，看着像组件画重了 */
         <ul className="notes">
           {warnings.map((w, i) => (

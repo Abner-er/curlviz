@@ -6,15 +6,34 @@ interface Props {
   items: HistoryEntry[]
   quoteStyle: 'posix' | 'windows'
   multiline: boolean
+  /** 历史与导出是否默认脱敏。开关放这块而不是顶栏：它只影响看得见的这一列。 */
+  redactHistory: boolean
+  onRedactHistory: (value: boolean) => void
   onPick: (entry: HistoryEntry) => void
   onDelete: (id: string) => void
   onClear: () => void
 }
 
-export function HistoryPanel({ items, quoteStyle, multiline, onPick, onDelete, onClear }: Props) {
+export function HistoryPanel({
+  items,
+  quoteStyle,
+  multiline,
+  redactHistory,
+  onRedactHistory,
+  onPick,
+  onDelete,
+  onClear
+}: Props) {
   return (
     <section className="card">
-      <h2>历史（最近 {items.length} 条，只存这台机器）</h2>
+      <div className="card-head">
+        <h2>历史（最近 {items.length} 条，只存这台机器）</h2>
+        <span className="grow" />
+        <label className="inline-chk" title="关掉之后历史与导出会原样存 Authorization / Cookie，只在你自己机器上">
+          <input type="checkbox" checked={redactHistory} onChange={(e) => onRedactHistory(e.target.checked)} />
+          脱敏
+        </label>
+      </div>
       {items.length === 0 && <p className="muted">发送成功后会自动记一条。默认脱敏，密码与 token 不入库。</p>}
       <ul className="history">
         {items.map((e) => (

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { KNOWN_METHODS, createDefaultSpec, generateCurl, type CurlSpec } from '@curlviz/core'
+import type { CSSProperties } from 'react'
+import { createDefaultSpec, generateCurl, type CurlSpec, type QuoteStyle } from '@curlviz/core'
 import type { Settings } from './types'
 import { KEYS, createBrowserStore } from './lib/storage'
 import { varsFor, type EnvState } from './lib/environments'
@@ -8,17 +9,32 @@ import { applySharePayload, loadBootState } from './lib/bootstrap'
 import { entryForEditor } from './lib/history'
 import { importCurlText } from './lib/imports'
 import { shiftTab } from './lib/tabs'
-import { currentPageHref, headerRowNote, prefersReducedMotion, preSendNotices, queryRowNote, scrollBehaviorFor } from './lib/display'
+import { SPLIT_DEFAULT } from './lib/split'
+import { buildSendMenu, type SendActionId } from './lib/send-actions'
+import { copyText } from './lib/clipboard'
+import {
+  countBadge,
+  currentPageHref,
+  headerRowNote,
+  prefersReducedMotion,
+  preSendFacts,
+  queryRowNote,
+  scrollBehaviorFor
+} from './lib/display'
 import { usePersistence } from './hooks/usePersistence'
 import { useWorkbench } from './hooks/useWorkbench'
 import { useSend } from './hooks/useSend'
 import { useShareImport } from './hooks/useShareImport'
+import { useSplit, useSplitOrientation } from './hooks/useSplit'
 import { CurlPreview } from './components/CurlPreview'
 import { ImportDialog } from './components/ImportDialog'
 import { Overlay } from './components/Overlay'
+import { RequestBar } from './components/RequestBar'
 import { ResponsePanel } from './components/ResponsePanel'
 import { HistoryPanel } from './components/HistoryPanel'
 import { KeyValueTable } from './components/KeyValueTable'
+import { Rail, type RailAction } from './components/Rail'
+import { Splitter } from './components/Splitter'
 import { AuthEditor, BodyEditor, OptionsEditor } from './components/Editors'
 import { LibraryPanel, type LibrarySection } from './components/LibraryPanel'
 import type { ShareTarget } from './components/CollectionsPanel'
@@ -26,7 +42,20 @@ import { ShareDialog } from './components/ShareDialog'
 
 type Tab = 'query' | 'headers' | 'body' | 'auth' | 'options'
 
-const DEFAULT_SETTINGS: Settings = { quoteStyle: 'posix', multiline: true, redactHistory: true }
+/**
+ * 布局断点（px）：宽到能左右分栏就左右，否则上下。
+ * 这个数字必须与 styles.css 里那条 @media 一致 —— 两边不一致的话
+ * JS 以为在左右分而 CSS 排成上下，分隔条就会拖到一个对不上的方向上。
+ */
+const SPLIT_BREAKPOINT = 1100
+
+const DEFAULT_SETTINGS: Settings = {
+  quoteStyle: 'posix',
+  multiline: true,
+  redactHistory: true,
+  curlOpen: true,
+  splitRatio: SPLIT_DEFAULT
+}
 
 /**
  * 存储后端与开机状态在模块加载时算一次：
@@ -65,11 +94,12 @@ export function App() {
   const vars = useMemo(() => varsFor(envState), [envState])
 
   /*
-   * 发送前就该看见的提醒（现在是跨域预检那一条）。判据不在这里，在 lib/display + lib/fetch-rules：
-   * App 只负责把结果递给 curl 预览区。页面地址在本地是 http://localhost:5183，
-   * 目标却常常是内网另一台机器或公网 API —— 那就跨域，浏览器说了算的部分得先说清楚。
+   * 发送前就该看见的提醒（跨域预检是其中一条）+ 请求行那颗徽标，一次判定出两份结果。
+   * 判据不在这里，在 lib/display + lib/fetch-rules：App 只负责把结果递给要画它的地方。
+   * 页面地址在本地是 http://localhost:5183，目标却常常是内网另一台机器或公网 API ——
+   * 那就跨域，浏览器说了算的部分得先说清楚。
    */
-  const preNotices = useMemo(() => preSendNotices(wb.spec, vars, currentPageHref()), [wb.spec, vars])
+  const facts = useMemo(() => preSendFacts(wb.spec, vars, currentPageHref()), [wb.spec, vars])
 
   const sender = useSend({
     spec: wb.spec,
@@ -85,13 +115,17 @@ export function App() {
     [wb.spec, settings.quoteStyle, settings.multiline]
   )
 
+  const orientation = useSplitOrientation(SPLIT_BREAKPOINT)
+  const commitSplit = useCallback((ratio: number) => setSettings((s) => ({ ...s, splitRatio: ratio })), [])
+  const split = useSplit({ initial: settings.splitRatio, onCommit: commitSplit, orientation })
+
   const [tab, setTab] = useState<Tab>('query')
   const [importOpen, setImportOpen] = useState(false)
   /**
    * 资料库抽屉，默认关着 —— 这个工具的主动作是"改命令、发出去、看结果"，
    * 那一整页都该留给工作台。
-   * 代价写明白：库收起来之后，第一次用的人看不出这里有个集合库。
-   * 补法是顶栏那颗按钮带集合数 / 请求数的徽章，不开也能知道库里有没有东西。
+   * 代价写明白：库收起来之后，第一次用的人看不出这里有个集合库 ——
+   * 补法是左侧那条操作栏：集合 / 环境 / 导出三个入口常驻，徽章上还带着库里有多少条。
    */
   const [libOpen, setLibOpen] = useState(false)
   /**
@@ -177,14 +211,63 @@ export function App() {
   const boundEntry = useMemo(() => boundEntryOf(colState, wb.activeRef), [colState, wb.activeRef])
 
   /**
-   * 顶栏徽章：抽屉默认关着，"库里到底有没有东西"就只剩这一处能看出来。
-   * 只给集合数与请求总数，不给"是哪个集合"—— 这颗按钮的职责是提示有库、
-   * 以及库有多大，具体翻哪一节是抽屉里的事。
+   * 操作栏上的徽章：抽屉默认关着，"库里到底有没有东西、历史里有多少条"就只剩这几处能看出来。
    * 请求数走 lib 的 requestCount，与抽屉标题那一行同一个算法。
    */
-  const libBadge = useMemo(
-    () => ({ collections: colState.collections.length, requests: requestCount(colState) }),
-    [colState]
+  const railBadges = useMemo(
+    () => ({
+      collections: countBadge(requestCount(colState)),
+      env: envState.activeName === null ? undefined : `${Object.keys(vars).length}`,
+      history: countBadge(sender.history.length)
+    }),
+    [colState, envState.activeName, vars, sender.history.length]
+  )
+
+  const sendMenu = useMemo(
+    () => buildSendMenu({ quoteStyle: settings.quoteStyle, multiline: settings.multiline, corsBlocked: facts.preflightExpected }),
+    [settings.quoteStyle, settings.multiline, facts.preflightExpected]
+  )
+
+  /**
+   * 「发送 ▾」里的每一项都只是"换一种形态复制这份命令"，所以全部走同一份 generateCurl，
+   * 不另拼字符串 —— 拼两份就会出现两份不一致的命令，而用户只会发现坏的那份。
+   */
+  const onSendAction = useCallback(
+    async (id: SendActionId) => {
+      const other: QuoteStyle = settings.quoteStyle === 'posix' ? 'windows' : 'posix'
+      let text = curl
+      let label = '命令'
+      if (id === 'copy-alt-quote') {
+        text = generateCurl(wb.spec, { quoteStyle: other, multiline: settings.multiline })
+        label = `${other === 'windows' ? 'cmd.exe' : 'POSIX'} 引号的命令`
+      } else if (id === 'copy-single-line') {
+        text = generateCurl(wb.spec, { quoteStyle: settings.quoteStyle, multiline: false })
+        label = '单行命令'
+      } else if (id === 'copy-url') {
+        text = wb.spec.url
+        label = 'URL'
+      }
+      const ok = await copyText(text)
+      notify(ok ? `已复制${label}，可直接粘出去` : '浏览器不让写剪贴板，请手动全选复制')
+    },
+    [curl, notify, settings.multiline, settings.quoteStyle, wb.spec]
+  )
+
+  const onRail = useCallback(
+    (action: RailAction) => {
+      if (action === 'new') return newRequest()
+      if (action === 'import') return setImportOpen(true)
+      if (action === 'share')
+        return setShare({ kind: 'request', spec: wb.spec, label: wb.spec.name || '当前请求' })
+      if (action === 'history') {
+        // 历史在结果栏底部，窄屏时可能在视口外：这颗按钮的意思是"带我去看"，不是开关
+        const el = document.getElementById('history-card')
+        if (el !== null) el.scrollIntoView({ behavior: scrollBehaviorFor(prefersReducedMotion()), block: 'start' })
+        return
+      }
+      openLibrary(action === 'env' ? 'lib-env' : action === 'io' ? 'lib-io' : 'lib-collections')
+    },
+    [newRequest, openLibrary, wb.spec]
   )
 
   const tabs: { value: Tab; label: string; badge?: number }[] = [
@@ -239,44 +322,16 @@ export function App() {
   }
 
   return (
-    <>
+    <div className="app">
       <header className="top">
         <h1>CurlViz</h1>
         <span className="tag">curl 可视化 · 免登录 / 不过云 / 数据全本地</span>
         <div className="grow" />
-        <label style={{ margin: 0 }}>
-          引号
-          <select
-            value={settings.quoteStyle}
-            onChange={(e) => setSettings({ ...settings, quoteStyle: e.target.value as Settings['quoteStyle'] })}
-            style={{ marginLeft: '0.35rem' }}
-          >
-            <option value="posix">POSIX（bash / Git-Bash / macOS）</option>
-            <option value="windows">Windows（cmd.exe）</option>
-          </select>
-        </label>
-        <label style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', margin: 0 }}>
-          <input
-            type="checkbox"
-            checked={settings.multiline}
-            onChange={(e) => setSettings({ ...settings, multiline: e.target.checked })}
-          />
-          多行
-        </label>
-        <label style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', margin: 0 }}>
-          <input
-            type="checkbox"
-            checked={settings.redactHistory}
-            onChange={(e) => setSettings({ ...settings, redactHistory: e.target.checked })}
-          />
-          历史脱敏
-        </label>
-
         {/*
-          环境在顶栏只留"现在生效的是哪个"这一句读数，不留下拉框。
-          原来这里有一个选择器、左栏还有一个，两个地方改同一个状态，
-          人会不确定"现在生效的到底是哪个"；现在改动仍然只有抽屉里那一处入口。
-          这颗是只读的跳转按钮，读屏念出来也是"状态 + 去看"，不是"在这儿换环境"。
+          顶栏只剩这三样。引号与多行挪进「等价 curl」那一行（它们只改那份命令的形状，
+          放在被影响的东西旁边才看得出关联），历史脱敏挪进历史卡标题行，
+          集合 / 环境 / 导入 / 分享挪进左侧操作栏 —— 原来这 6 样挤在一条 56px 高的栏里，
+          1280 宽就换行成 98px（实测），把最贵的首屏高度吃掉了。
         */}
         <button
           className="env-chip"
@@ -286,183 +341,137 @@ export function App() {
           环境 · {envState.activeName ?? '未启用'}
           {envState.activeName !== null && <span className="tag-mini">{Object.keys(vars).length}</span>}
         </button>
-
-        <button
-          className="mini"
-          onClick={() => openLibrary()}
-          aria-haspopup="dialog"
-          title="集合 / 环境 / 导入导出（抽屉，数据都在这台机器上）"
-        >
-          资料库
-          <span className="tag-mini">
-            {libBadge.collections} 集合 · {libBadge.requests} 请求
-          </span>
-        </button>
       </header>
 
-      <main>
-        <div className="shell-work">
-          {persistence.storageIssue && (
-            <ul className="notes" style={{ marginBottom: '0.8rem' }}>
-              <li className="err">{persistence.storageIssue}</li>
-            </ul>
-          )}
+      <div className="body">
+        <Rail
+          onAction={onRail}
+          badges={railBadges}
+          disabled={{ share: !sender.canSend }}
+        />
 
-          <section className="card">
-            <h2>请求</h2>
-            <div className="row">
-              <div style={{ width: '12rem' }}>
-                <label>名称</label>
-                <input value={wb.spec.name} onChange={(e) => wb.patch({ name: e.target.value })} />
-              </div>
-              {boundEntry && (
-                <span className="muted" style={{ paddingBottom: '0.4rem' }}>
-                  编辑自「{boundEntry.collection}」的 {boundEntry.request}
-                </span>
-              )}
-            </div>
-            <div className="url-bar" style={{ marginTop: '0.5rem' }}>
-              <select
-                value={
-                  KNOWN_METHODS.includes(wb.spec.method as (typeof KNOWN_METHODS)[number]) ? wb.spec.method : 'CUSTOM'
-                }
-                onChange={(e) => {
-                  if (e.target.value !== 'CUSTOM') wb.patch({ method: e.target.value })
+        <div className="track" style={{ '--split': String(split.ratio) } as CSSProperties}>
+          <main className="col-work">
+            {persistence.storageIssue && (
+              <ul className="notes" style={{ marginBottom: '0.8rem' }}>
+                <li className="err">{persistence.storageIssue}</li>
+              </ul>
+            )}
+
+            <RequestBar
+              name={wb.spec.name}
+              method={wb.spec.method}
+              url={wb.spec.url}
+              sending={sender.sending}
+              canSend={sender.canSend}
+              preflightExpected={facts.preflightExpected}
+              preflightReason={facts.reason}
+              menu={sendMenu}
+              boundNote={boundEntry ? `编辑自「${boundEntry.collection}」的 ${boundEntry.request}` : null}
+              onName={(name) => wb.patch({ name })}
+              onMethod={(method) => wb.patch({ method })}
+              onUrl={(url) => wb.patch({ url })}
+              onSend={() => void sender.send()}
+              onCancel={sender.cancel}
+              onAction={(id) => void onSendAction(id)}
+            />
+
+            <section className="card">
+              <nav
+                className="tabs"
+                role="tablist"
+                aria-label="请求编辑器分区"
+                onKeyDown={(e) => {
+                  const values = tabs.map((t) => t.value)
+                  let next: Tab
+                  if (e.key === 'ArrowRight') next = shiftTab(values, tab, 1)
+                  else if (e.key === 'ArrowLeft') next = shiftTab(values, tab, -1)
+                  else if (e.key === 'Home') next = values[0] ?? tab
+                  else if (e.key === 'End') next = values[values.length - 1] ?? tab
+                  else return
+                  e.preventDefault()
+                  // 页签之间用方向键走，所以只有选中那颗留在 Tab 顺序里（roving tabindex）。
+                  // 换完页签必须把焦点也挪过去：焦点留在原来那颗上时它已经变成 tabIndex=-1，
+                  // 再按 Tab 会从中间跳出去，读屏报的页签名也和面板对不上。
+                  setTab(next)
+                  document.getElementById(`tab-${next}`)?.focus()
                 }}
-                aria-label="方法"
-                style={{ width: '7.5rem' }}
               >
-                {KNOWN_METHODS.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
+                {tabs.map((t) => (
+                  <button
+                    key={t.value}
+                    id={`tab-${t.value}`}
+                    role="tab"
+                    aria-selected={tab === t.value}
+                    aria-controls={`panel-${t.value}`}
+                    tabIndex={tab === t.value ? 0 : -1}
+                    onClick={() => setTab(t.value)}
+                  >
+                    {t.label}
+                    {t.badge ? ` (${t.badge})` : ''}
+                  </button>
                 ))}
-                <option value="CUSTOM">自定义…</option>
-              </select>
-              <input
-                className="url"
-                value={wb.spec.method}
-                onChange={(e) => wb.patch({ method: e.target.value.toUpperCase() })}
-                aria-label="方法名"
-                title="curl 不限制方法名，可以直接改"
-              />
-              <input
-                className="url grow"
-                value={wb.spec.url}
-                placeholder="https://internal.api/v1/list"
-                spellCheck={false}
-                onChange={(e) => wb.patch({ url: e.target.value })}
-                aria-label="URL"
-              />
-              {sender.sending ? (
-                <button onClick={sender.cancel}>取消</button>
-              ) : (
-                <button className="primary" onClick={() => void sender.send()} disabled={!sender.canSend}>
-                  发送
-                </button>
-              )}
-            </div>
-            <div className="row" style={{ marginTop: '0.5rem' }}>
-              {/* 弹窗而不是一整块内联面板：粘贴导入是偶尔为之的动作，
-                  没道理让它长期占走工作区最贵的那几行高度 */}
-              <button className="mini" onClick={() => setImportOpen(true)} aria-haspopup="dialog">
-                粘贴 curl 导入
-              </button>
-              <button className="mini" onClick={newRequest}>
-                新建空请求
-              </button>
-              <button
-                className="mini"
-                onClick={() => setShare({ kind: 'request', spec: wb.spec, label: wb.spec.name || '当前请求' })}
-                disabled={!sender.canSend}
-                title="生成链接 / 二维码，对方打开就导入（默认脱敏，本地生成）"
-              >
-                分享这条
-              </button>
-              <span className="muted">Ctrl+Enter 发送</span>
-            </div>
-            {!sender.canSend && <p className="muted">填了 URL 才能发送。</p>}
-          </section>
+              </nav>
 
-          <section className="card">
-            <nav
-              className="tabs"
-              role="tablist"
-              aria-label="请求编辑器分区"
-              onKeyDown={(e) => {
-                const values = tabs.map((t) => t.value)
-                let next: Tab
-                if (e.key === 'ArrowRight') next = shiftTab(values, tab, 1)
-                else if (e.key === 'ArrowLeft') next = shiftTab(values, tab, -1)
-                else if (e.key === 'Home') next = values[0] ?? tab
-                else if (e.key === 'End') next = values[values.length - 1] ?? tab
-                else return
-                e.preventDefault()
-                // 页签之间用方向键走，所以只有选中那颗留在 Tab 顺序里（roving tabindex）。
-                // 换完页签必须把焦点也挪过去：焦点留在原来那颗上时它已经变成 tabIndex=-1，
-                // 再按 Tab 会从中间跳出去，读屏报的页签名也和面板对不上。
-                setTab(next)
-                document.getElementById(`tab-${next}`)?.focus()
-              }}
-            >
               {tabs.map((t) => (
-                <button
+                <div
                   key={t.value}
-                  id={`tab-${t.value}`}
-                  role="tab"
-                  aria-selected={tab === t.value}
-                  aria-controls={`panel-${t.value}`}
-                  tabIndex={tab === t.value ? 0 : -1}
-                  onClick={() => setTab(t.value)}
+                  role="tabpanel"
+                  id={`panel-${t.value}`}
+                  aria-labelledby={`tab-${t.value}`}
+                  hidden={tab !== t.value}
                 >
-                  {t.label}
-                  {t.badge ? ` (${t.badge})` : ''}
-                </button>
+                  {tab === t.value ? panelFor(t.value) : null}
+                </div>
               ))}
-            </nav>
+            </section>
 
-            {tabs.map((t) => (
-              <div
-                key={t.value}
-                role="tabpanel"
-                id={`panel-${t.value}`}
-                aria-labelledby={`tab-${t.value}`}
-                hidden={tab !== t.value}
-              >
-                {tab === t.value ? panelFor(t.value) : null}
-              </div>
-            ))}
-          </section>
+            {/* curl 预览紧跟编辑器：改一个参数要立刻看到命令怎么变，
+                原来它在右栏，视线要跨过整个响应区才能对上。
+                折成 dock 是为了让它别再把整栏撑到 427px（实测）。 */}
+            <CurlPreview
+              curl={curl}
+              warnings={wb.warnings}
+              preNotices={facts.notices}
+              quoteStyle={settings.quoteStyle}
+              multiline={settings.multiline}
+              onQuoteStyle={(quoteStyle) => setSettings({ ...settings, quoteStyle })}
+              onMultiline={(multiline) => setSettings({ ...settings, multiline })}
+              open={settings.curlOpen}
+              onToggle={(curlOpen) => setSettings({ ...settings, curlOpen })}
+            />
+          </main>
 
-          {/* curl 预览紧跟编辑器：改一个参数要立刻看到命令怎么变，
-              原来它在右栏，视线要跨过整个响应区才能对上 */}
-          <CurlPreview
-            curl={curl}
-            warnings={wb.warnings}
-            preNotices={preNotices}
-            quoteStyle={settings.quoteStyle}
-            onFixQuoteStyle={() => setSettings({ ...settings, quoteStyle: 'windows' })}
+          <Splitter
+            orientation={orientation}
+            ratio={split.ratio}
+            label="工作台与结果之间的分隔条"
+            handle={split}
           />
-        </div>
 
-        <div className="shell-result">
-          <ResponsePanel report={wb.report} sending={sender.sending} />
-          <HistoryPanel
-            items={sender.history}
-            quoteStyle={settings.quoteStyle}
-            multiline={settings.multiline}
-            onPick={(e) => {
-              const picked = entryForEditor(e)
-              load({ spec: picked.spec })
-              // 脱敏过的历史条目必须当场说一句：不然用户拿 •••••••• 当真凭据发出去，
-              // 收到 401 只会怀疑接口坏了
-              if (picked.note) notify(picked.note)
-            }}
-            onDelete={sender.removeHistory}
-            onClear={sender.clearHistory}
-          />
+          <aside className="col-result">
+            <ResponsePanel report={wb.report} sending={sender.sending} />
+            <div id="history-card">
+              <HistoryPanel
+                items={sender.history}
+                quoteStyle={settings.quoteStyle}
+                multiline={settings.multiline}
+                redactHistory={settings.redactHistory}
+                onRedactHistory={(redactHistory) => setSettings({ ...settings, redactHistory })}
+                onPick={(e) => {
+                  const picked = entryForEditor(e)
+                  load({ spec: picked.spec })
+                  // 脱敏过的历史条目必须当场说一句：不然用户拿 •••••••• 当真凭据发出去，
+                  // 收到 401 只会怀疑接口坏了
+                  if (picked.note) notify(picked.note)
+                }}
+                onDelete={sender.removeHistory}
+                onClear={sender.clearHistory}
+              />
+            </div>
+          </aside>
         </div>
-      </main>
+      </div>
 
       {/*
         资料库抽屉：集合 / 环境 / 导入导出都在这里面，不进正常文档流，工作区因此吃满整页。
@@ -507,7 +516,7 @@ export function App() {
       )}
 
       {toast && <div className="toast">{toast}</div>}
-    </>
+    </div>
   )
 }
 

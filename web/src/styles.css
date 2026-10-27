@@ -184,57 +184,68 @@ header.top .tag {
 }
 
 /*
- * 两栏 shell：工作台 / 结果。资料库不在这里占栏 —— 它是按需拉开的右侧抽屉（见 .backdrop-drawer），
- * 因为主动作是"改命令、发出去、看结果"，整页宽度都该给这几件事。
- * 根字号 17px，所以 1rem ≈ 17px —— 下面这几档宽度是按"两边各自放得下什么"倒推的，
- * 不是随手挑的整数：工作台要放得下 URL 条与 curl 预览（约 510px），
- * 结果栏要放得下响应体（约 442px），两栏加间距加页边到 1100px 就顶不住了，以下改成上下排。
- * （本轮只换皮肤与控件形状，这几档宽度与断点一律没动。）
+ * 应用外壳：顶栏 / 左侧操作栏 / 工作台 / 分隔条 / 结果栏。
+ *
+ * 整页不滚（.app 高 100dvh、overflow hidden），两栏各自内部滚 —— 这条是照 Postman 最实用那条规矩来的：
+ * 点完发送要立刻看见返回，而工作台永远比结果长，跟着整页滚的话响应就在屏幕外
+ * （改之前实测：1024 宽时结果卡落在 y=1028，也就是要滚过一整屏才看得见）。
+ *
+ * 根字号 17px，1rem ≈ 17px。断点 1100px 按"两边各自放得下什么"倒推：
+ * 工作台要放得下方法框 + URL + 发送（约 470px），结果栏要放得下响应体（约 442px），
+ * 再加操作栏 58px 与两边页边，1100px 以下顶不住，就改成上下分栏。
+ * 同一个数字在 App.tsx 的 SPLIT_BREAKPOINT 里也写了一份（JS 要靠它判断该往哪个方向拖），
+ * 两边必须一致 —— 不一致的结果是分隔条按横向手感算比例、CSS 却排成上下，拖起来是反的。
  */
-main {
+.app {
   display: grid;
-  gap: 1rem;
-  padding: 1rem;
-  align-items: start;
-  grid-template-columns: minmax(32rem, 1.5fr) minmax(26rem, 1fr);
-  grid-template-areas: "work result";
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100dvh;
+  overflow: hidden;
 }
 
-.shell-work {
-  grid-area: work;
+.body {
+  --rail-w: 3.4rem;
+  --split-w: 7px;
+  display: grid;
+  grid-template-columns: var(--rail-w) minmax(0, 1fr);
+  min-height: 0;
 }
 
-.shell-result {
-  grid-area: result;
+.track {
+  display: grid;
   /*
-   * 结果栏 sticky 且自己滚动：工作台比它长（表单 + curl 预览），
-   * 跟着整页滚的话，往下改参数时响应就滚出屏幕了，而"边改边看上一条返回什么"
-   * 正是排查接口时的常态。top 值给粘性 header 让位（header 约 3.2rem 高）。
+   * 工作台那列按 --split（0.28~0.78，由分隔条写进来）分宽。
+   * 先减掉分隔条自己那几像素再乘比例，否则松手后的宽度比指针位置差一个把手宽，看着就是没跟手。
+   * minmax(0, …) 是必需的：两栏里都放着 nowrap 的长命令，默认 min-width:auto 会把列撑破。
    */
-  position: sticky;
-  top: 3.6rem;
-  max-height: calc(100vh - 4.4rem);
+  grid-template-columns: minmax(0, calc((100% - var(--split-w)) * var(--split, 0.56))) var(--split-w) minmax(0, 1fr);
+  min-height: 0;
+  min-width: 0;
+}
+
+/* 工作台（仍是 <main>，读屏跳主区才落得对） */
+main {
+  min-width: 0;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding-right: 0.15rem;
+  padding: 0.9rem 0.7rem 1rem 1rem;
 }
 
-/* 窄屏（含手机与分屏）：单列，顺序仍是"先改命令、再看结果" */
-@media (max-width: 1100px) {
-  main {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas:
-      "work"
-      "result";
-  }
-
-  /* 单列时 sticky 与自身滚动都没意义：让它跟着页面正常流下去 */
-  .shell-result {
-    position: static;
-    max-height: none;
-    overflow-y: visible;
-  }
+.col-result {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.9rem 1rem 1rem 0.4rem;
 }
+
+/*
+  窄屏与极窄屏的两条 @media 挪到文件末尾去了 —— 不是整理癖：
+  `.rail`、`.splitter` 这些基础规则写在后面（M2.9 那一段），同权重下后生效，
+  留在原地的那两份覆盖等于没写：实测 600px 宽时操作栏仍是竖排、每颗按钮 589px 宽，
+  分隔条也没被藏掉。响应式覆盖必须排在所有基础规则之后。
+*/
 
 section.card {
   background: var(--panel);
@@ -244,7 +255,8 @@ section.card {
   margin-bottom: 0.9rem;
 }
 
-section.card > h2 {
+section.card > h2,
+section.card .card-head > h2 {
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.07em;
@@ -351,17 +363,6 @@ button.mini {
 .grow {
   flex: 1 1 12rem;
   min-width: 0;
-}
-
-.url-bar {
-  display: flex;
-  gap: 0.4rem;
-}
-
-.url-bar input.url {
-  flex: 1;
-  font-family: var(--mono);
-  font-size: 0.85rem;
 }
 
 table.kv {
@@ -473,7 +474,8 @@ pre.code {
   font-size: 0.84rem;
   line-height: 1.6;
   background: var(--code-bg);
-  border: 1px solid var(--line);
+  /* 与输入框同一档边强：--line 在浅色下对着 code-bg 只有 1.17（实测），等于没有边 */
+  border: 1px solid var(--line-2);
   border-radius: var(--r-ctl);
   padding: 0.6rem 0.7rem;
   margin: 0;
@@ -881,4 +883,426 @@ button:focus-visible {
    否则刚 Tab 出去的按钮正好贴在吸顶栏底下，看着像没反应 */
 .drawer :focus-visible {
   scroll-margin-top: 6rem;
+}
+
+/* ---------------- M2.9：三栏外壳的控件（操作栏 / 请求行 / 分隔条 / curl dock / 发送菜单） ---------------- */
+
+/*
+ * 左侧操作栏。用两字中文标签而不是图标：见 components/Rail.tsx 那段说明。
+ * 宽度由 .body 的 --rail-w 决定（3.4rem ≈ 58px），正好放两个 0.74rem 的字。
+ */
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  padding: 0.45rem 0.3rem;
+  background: var(--bg-2);
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.rail-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.05rem;
+  min-height: 2.5rem;
+  padding: 0.15rem 0.1rem;
+  background: transparent;
+  border-color: transparent;
+  border-radius: var(--r-ctl);
+  color: var(--fg-dim);
+}
+
+.rail-btn:hover:not(:disabled) {
+  background: var(--ctl-hover);
+  border-color: var(--line);
+  color: var(--fg);
+}
+
+.rail-label {
+  font-size: 0.74rem;
+  letter-spacing: 0.02em;
+}
+
+.rail-badge {
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  color: var(--fg-dim);
+}
+
+/* 分隔条：静止时几乎看不见，悬停 / 拖动 / 聚焦才亮起来（结构线不该抢内容的眼） */
+.splitter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+}
+
+.splitter-col {
+  cursor: col-resize;
+}
+
+.splitter-row {
+  cursor: row-resize;
+}
+
+.splitter .grip {
+  border-radius: 999px;
+  background: var(--line-2);
+  transition: background 0.12s ease;
+}
+
+.splitter-col .grip {
+  width: 2px;
+  height: 2.4rem;
+}
+
+.splitter-row .grip {
+  height: 2px;
+  width: 2.4rem;
+}
+
+.splitter:hover .grip,
+.splitter.dragging .grip {
+  background: var(--accent);
+}
+
+.splitter:focus {
+  outline: none;
+}
+
+.splitter:focus-visible .grip {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+/* 请求行：页面上唯一一行"高控件"，所以它比别的控件都高一档 */
+.req-title {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.doc-name {
+  min-width: 8rem;
+  max-width: 22rem;
+  padding: 0.05rem 0.3rem;
+  font-size: 0.95rem;
+  font-weight: 650;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-ctl);
+  min-height: 1.6rem;
+}
+
+.doc-name:hover {
+  border-color: var(--line);
+}
+
+.doc-name:focus {
+  background: var(--ctl);
+  border-color: var(--accent);
+}
+
+.req-title .keys {
+  font-size: 0.72rem;
+}
+
+.ellip {
+  max-width: 18rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.74rem;
+}
+
+.req-bar {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+/* 方法框：可输入的 combobox（datalist 给候选），所以宽度按"放得下 DELETE/OPTIONS"给 */
+.req-bar .method {
+  flex: 0 0 auto;
+  width: 8.2rem;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  min-height: 2.1rem;
+  text-transform: uppercase;
+}
+
+.req-bar input.url {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  min-height: 2.1rem;
+}
+
+.req-bar .send-split {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+}
+
+.send-split > button {
+  min-height: 2.1rem;
+  font-size: 0.85rem;
+}
+
+.send-split > button:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+/*
+  这颗 ▾ 用的是 .send-caret 而不是 .caret —— 不是偏好问题，是撞车：
+  样式表里排在下面的 `button.caret { background: transparent }`（集合树那个展开箭头）
+  与 `button.primary { background: var(--accent) }` 同权重却后生效，
+  于是把 ▾ 的底色刮掉、字色却留着，实测对比度浅色 1.00 / 深色 1.08 —— 一颗看不见的按钮。
+  换个类名，不靠"谁排在后面"活着。
+*/
+.send-split > .send-caret {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  margin-left: 1px; /* 中间留一道缝，才读得出这是两颗按钮而不是一颗宽的 */
+  padding: 0 0.45rem;
+}
+
+button.primary.danger {
+  background: var(--err-bg);
+  border-color: var(--err);
+  color: var(--err);
+  font-weight: 600;
+}
+
+button.primary.danger:hover:not(:disabled) {
+  filter: brightness(1.12);
+  background: var(--err-bg);
+  border-color: var(--err);
+}
+
+/* 发送 ▾ 的菜单 */
+.menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  display: grid;
+  gap: 0.08rem;
+  min-width: 21rem;
+  padding: 0.3rem;
+  background: var(--panel);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-panel);
+  box-shadow: var(--shadow-pop);
+}
+
+.menu-note {
+  margin: 0.1rem 0.3rem 0.35rem;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: var(--fg-dim);
+}
+
+.menu > button {
+  display: grid;
+  gap: 0.05rem;
+  min-height: 0;
+  padding: 0.32rem 0.4rem;
+  text-align: left;
+  background: transparent;
+  border-color: transparent;
+}
+
+.menu > button:hover:not(:disabled) {
+  background: var(--ctl-hover);
+  border-color: var(--line);
+}
+
+.menu-label {
+  font-size: 0.82rem;
+}
+
+.menu-hint {
+  font-size: 0.7rem;
+  color: var(--fg-dim);
+}
+
+/* 胶囊徽标：短到能塞进标题行，长说明留在 title 里 */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: 1.35rem;
+  padding: 0 0.45rem;
+  font-size: 0.72rem;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: var(--bg-2);
+  color: var(--fg-dim);
+}
+
+.chip.warn {
+  border-color: var(--warn);
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+button.chip.warn {
+  min-height: 1.35rem;
+  cursor: pointer;
+}
+
+/* 二选一的分段控件（引号风格）：比下拉少一次点击，也让"当前是哪份"一眼可见 */
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-ctl);
+  overflow: hidden;
+}
+
+.seg-btn {
+  min-height: 1.55rem;
+  padding: 0 0.5rem;
+  font-size: 0.74rem;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--fg-dim);
+}
+
+.seg-btn + .seg-btn {
+  border-left: 1px solid var(--line-2);
+}
+
+.seg-btn[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.inline-chk {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin: 0;
+  font-size: 0.76rem;
+  color: var(--fg-dim);
+}
+
+/* 卡片标题行：标题与"影响这块的那颗开关"并排（历史卡的脱敏开关就在这儿） */
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.card-head > h2 {
+  margin: 0;
+}
+
+/* 等价 curl 的 dock：折起来只剩一行，展开也只在自身内部滚 */
+.dock-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.dock-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 1.5rem;
+  padding: 0 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  background: transparent;
+  border-color: transparent;
+  color: var(--fg-dim);
+}
+
+.dock-toggle:hover:not(:disabled) {
+  background: var(--ctl-hover);
+  border-color: transparent;
+  color: var(--fg);
+}
+
+.dock-toggle .caret {
+  font-size: 0.68rem;
+  color: var(--fg-dim);
+}
+
+.dock-body {
+  margin-top: 0.5rem;
+}
+
+/* 长命令自己滚：不封顶的话一条 30 行的命令能把整栏顶到看不见编辑器 */
+.dock-body pre.code {
+  max-height: 40vh;
+  overflow: auto;
+}
+
+/* ============================================================
+   响应式覆盖（必须排在所有基础规则之后，见上面那段说明）
+   ============================================================ */
+
+/* 窄屏（含分屏与手机）：同一对栏改成上下摞，顺序仍是"先改命令、再看结果"，照样各自滚 */
+@media (max-width: 1100px) {
+  .track {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, calc((100% - var(--split-w)) * var(--split, 0.56))) var(--split-w) minmax(0, 1fr);
+  }
+
+  main {
+    padding: 0.8rem 0.9rem 0.6rem;
+  }
+
+  .col-result {
+    padding: 0.6rem 0.9rem 0.9rem;
+  }
+}
+
+/* 极窄或极矮（手机竖屏、半屏分屏）：外壳退回整页滚，别再切两截各自滚 */
+@media (max-width: 640px), (max-height: 520px) {
+  .app {
+    height: auto;
+    overflow: visible;
+  }
+
+  .body,
+  .track {
+    display: block;
+    height: auto;
+  }
+
+  main,
+  .col-result {
+    overflow: visible;
+  }
+
+  /* 操作栏横过来当一条工具条：竖排会把 7 颗按钮拉成 7 行 589px 宽的条，首屏全是它 */
+  .rail {
+    flex-direction: row;
+    flex-wrap: wrap;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .rail-btn {
+    flex: 0 1 auto;
+    min-width: 3.2rem;
+  }
+
+  .splitter {
+    display: none;
+  }
 }

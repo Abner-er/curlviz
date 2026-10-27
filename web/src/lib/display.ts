@@ -22,15 +22,37 @@ export function currentPageHref(): string {
   return globalThis.location?.href ?? ''
 }
 
+/** 发送前那次跨域判定的全部产出，一次算完给两处用。 */
+export interface PreSendFacts {
+  /** 折叠条里的完整提醒；没风险就是空数组。 */
+  notices: string[]
+  /** 这条到底会不会被浏览器打一次 OPTIONS 预检。只认预检，简单请求的读不到不算。 */
+  preflightExpected: boolean
+  /** 徽标悬停时念的那句（和 notices 里是同一条，不另写一份措辞）。 */
+  reason: string
+}
+
 /**
- * 发送前就该看见的提醒。目前只有跨域预检一条，但判据留在 lib：组件只画结果。
+ * 发送前就该看见的提醒 + 请求行那颗徽标，共用这一次判定。
  *
+ * 为什么要合成一个函数：徽标和提醒要是各算各的，就会出现"徽标亮了、提醒却说没风险"
+ * 这种自相矛盾，而用户只会记住被骗的那一次。
  * 先跑一遍 `resolveSpec` 是必需的 —— URL 里写着 `{{host}}/v1/chat` 时 origin 根本解析不出来，
  * 判成"没风险"，等于把最该提醒的那条命令漏掉。
  */
+export function preSendFacts(spec: CurlSpec, vars: VarMap, pageHref: string): PreSendFacts {
+  const risk = assessCors(resolveSpec(spec, vars).spec, pageHref)
+  const notice = corsPreSendNotice(risk)
+  return {
+    notices: notice === '' ? [] : [notice],
+    preflightExpected: risk !== null && risk.preflightReasons.length > 0,
+    reason: notice
+  }
+}
+
+/** 老调用点的形状：只要文案。 */
 export function preSendNotices(spec: CurlSpec, vars: VarMap, pageHref: string): string[] {
-  const notice = corsPreSendNotice(assessCors(resolveSpec(spec, vars).spec, pageHref))
-  return notice === '' ? [] : [notice]
+  return preSendFacts(spec, vars, pageHref).notices
 }
 
 /**
@@ -132,6 +154,17 @@ export function historySummary(entry: HistoryEntry): string {
  */
 export function scrollBehaviorFor(reduceMotion: boolean): 'auto' | 'smooth' {
   return reduceMotion ? 'auto' : 'smooth'
+}
+
+/**
+ * 操作栏上的计数徽章。0 一律不画。
+ *
+ * 一列按钮里挂着三个"0"，读起来像界面坏了；而"库里有多少条"这件事，
+ * 空库本来就没有可点进去看的东西，0 与"没数字"对用户是同一个结果。
+ * 例外留在调用点：环境那一格 0 个变量是 {{变量}} 没被替换的直接原因，那个 0 有信息量，得留。
+ */
+export function countBadge(n: number): string | undefined {
+  return n > 0 ? `${n}` : undefined
 }
 
 /**
