@@ -1,5 +1,13 @@
-import type { AuthConfig, BodyType, CurlSpec, MultipartParam, RequestOptions } from '@curlviz/core'
+import type {
+  AuthConfig,
+  BodyType,
+  CurlSpec,
+  MultipartParam,
+  RequestOptions,
+  ResolveEntry
+} from '@curlviz/core'
 import { applyRowEdit, needsDraftRow } from '../lib/kv-rows'
+import { applyResolveEdit, BLANK_RESOLVE, needsDraftResolveRow } from '../lib/resolve-rows'
 import { KeyValueTable } from './KeyValueTable'
 
 interface BodyProps {
@@ -174,6 +182,70 @@ function MultipartTable({
   )
 }
 
+/**
+ * 「指定解析」（`--resolve <host>:<port>:<addr>`）三列表，可加多条。
+ *
+ * core 里每条 resolve 都会输出，没有 enabled 位，所以只留删除、不留勾选。
+ * 端口为 0 视作空白（新行 / 还没填），输入框显示空而不是 0；生成时按契约原样落字符串。
+ * 与键值表同一套末行草稿算术（见 lib/resolve-rows）。
+ */
+function ResolveTable({ rows, onChange }: { rows: ResolveEntry[]; onChange: (rows: ResolveEntry[]) => void }) {
+  const body: ResolveEntry[] = needsDraftResolveRow(rows) ? [...rows, BLANK_RESOLVE] : rows
+  const set = (i: number, patch: Partial<ResolveEntry>): void => onChange(applyResolveEdit(rows, i, patch))
+  const num = (v: string): number => {
+    const n = Number(v)
+    return Number.isFinite(n) && n >= 0 && n <= 65535 ? Math.round(n) : 0
+  }
+
+  return (
+    <table className="kv">
+      <thead>
+        <tr>
+          <th>域名 host</th>
+          <th style={{ width: '7rem' }}>端口</th>
+          <th style={{ width: '18rem' }}>解析到的 IP</th>
+          <th style={{ width: '3rem' }} />
+        </tr>
+      </thead>
+      <tbody>
+        {body.map((row, i) => (
+          <tr key={i}>
+            <td>
+              <input value={row.host} onChange={(e) => set(i, { host: e.target.value })} placeholder="api.example.com" />
+            </td>
+            <td>
+              <input
+                type="number"
+                min={0}
+                max={65535}
+                value={row.port === 0 ? '' : row.port}
+                onChange={(e) => set(i, { port: num(e.target.value) })}
+                placeholder="443"
+              />
+            </td>
+            <td>
+              <input
+                className="mono"
+                value={row.addr}
+                onChange={(e) => set(i, { addr: e.target.value })}
+                placeholder={'93.184.216.34 或 [2001:db8::1]'}
+              />
+            </td>
+            <td>
+              {/* 草稿行不在 rows 里，没有"删掉它"这回事：打字那一刻它才成为一行 */}
+              {i < rows.length && (
+                <button className="mini" onClick={() => onChange(rows.filter((_, k) => k !== i))} title="删除">
+                  ✕
+                </button>
+              )}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
 export function AuthEditor({ auth, onChange }: { auth: AuthConfig; onChange: (a: AuthConfig) => void }) {
   return (
     <div>
@@ -292,6 +364,15 @@ export function OptionsEditor({
           <label>-x 代理</label>
           <input value={options.proxy} onChange={(e) => set({ proxy: e.target.value })} placeholder="http://127.0.0.1:8888" />
         </div>
+      </div>
+
+      <div style={{ marginTop: '0.7rem' }}>
+        <label>--resolve 指定解析（把某个域名钉到指定 IP，可加多条）</label>
+        <ResolveTable rows={options.resolve} onChange={(resolve) => set({ resolve })} />
+        <p className="muted">
+          「解析到的 IP」要写成 v4/v6 字面量（v6 带方括号），端口 0–65535；填成主机名或非法值，curl 会报
+          (49)。整行留空不会输出。
+        </p>
       </div>
 
       {rawArgs.length > 0 && (
