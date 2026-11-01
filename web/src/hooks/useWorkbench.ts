@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { cloneSpec, type CurlSpec, type ParseWarning } from '@curlviz/core'
+import { normalizeSpec, type CurlSpec, type ParseWarning } from '@curlviz/core'
 import { NO_OPEN_REF, type OpenRef } from '../lib/collections'
 import type { SendReport } from '../types'
 
@@ -14,7 +14,7 @@ import type { SendReport } from '../types'
  */
 
 export interface LoadInput {
-  /** 要显示的内容。内部一律 cloneSpec，调用方不必再惦记"这个对象是不是共享的"。 */
+  /** 要显示的内容。内部一律过 normalizeSpec：既断共享引用，又给旧记录补齐后来新增的必填字段（如 options.resolve）。 */
   spec: CurlSpec
   /** 省略 = 清空告警（换了一条命令，上一轮的告警不再相关）。 */
   warnings?: ParseWarning[]
@@ -37,13 +37,13 @@ export interface Workbench {
 }
 
 export function useWorkbench(initialSpec: CurlSpec, initialRef: OpenRef): Workbench {
-  const [spec, setSpec] = useState<CurlSpec>(initialSpec)
+  const [spec, setSpec] = useState<CurlSpec>(() => normalizeSpec(initialSpec))
   const [warnings, setWarnings] = useState<ParseWarning[]>([])
   const [activeRef, setActiveRef] = useState<OpenRef>(initialRef)
   const [report, setReport] = useState<SendReport | null>(null)
 
   const load = useCallback((input: LoadInput) => {
-    setSpec(cloneSpec(input.spec))
+    setSpec(normalizeSpec(input.spec))
     setWarnings(input.warnings ?? [])
     setActiveRef(input.ref ?? NO_OPEN_REF)
     if (input.clearReport !== false) setReport(null)

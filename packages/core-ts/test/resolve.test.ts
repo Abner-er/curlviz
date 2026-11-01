@@ -103,6 +103,16 @@ describe('normalizeSpec：读旧写新（把 rawArgs 里的 --resolve 抬进 opt
     expect(spec.rawArgs).toEqual([`--resolve 'a.test:80:localhost'`])
   })
 
+  it('旧草稿的 options 压根没有 resolve 键（M4a 之前存的）→ 补成空数组，不是 undefined', () => {
+    // 这条正是"网页白屏"的根因回归：旧 localStorage 草稿的 options 里没有 resolve，
+    // 读回来直接喂给读 options.resolve 的组件就会崩。normalizeSpec 必须补 []。
+    const spec = normalizeSpec({
+      url: 'http://a.test/',
+      options: { followRedirects: true, insecure: false, compressed: true, timeoutMs: 10000, connectTimeoutMs: 0, userAgent: '', proxy: '' }
+    })
+    expect(spec.options.resolve).toEqual([])
+  })
+
   it('已结构化的 resolve 数组里坏条目被丢弃、好条目留下', () => {
     const spec = normalizeSpec({
       url: 'http://a.test/',
