@@ -502,7 +502,7 @@ token 存哪：① localStorage 明文（最省事，但共用机器上别人能
 
 | 期 | 内容 | 风险 | 可测判据 |
 |---|---|---|---|
-| **M4a ✅** | `--resolve` 进 core：parse/generate round-trip + fixture + spec/README + 单测 + UI「指定解析」面板（复用末行草稿行组件） | 低（纯本地） | **已完成**：契约全绿（`contract.test.ts` 234 例含 `resolve.json` 6 条），core 388 passed + 1 skip，`resolve.test.ts` 20 例，web 345 passed（含 `resolve-rows.test.ts` 7 + `Editors.test.tsx` 指定解析 4），`vite build` 127 模块、`index-*.js` 277.40 kB / gzip 91.64；`roundtrip.live` 真 curl 对拍 `--resolve` 通过 |
+| **M4a ✅** | `--resolve` 进 core：parse/generate round-trip + fixture + spec/README + 单测 + UI「指定解析」面板（复用末行草稿行组件） | 低（纯本地） | **已完成**：契约全绿（`contract.test.ts` 234 例含 `resolve.json` 6 条），core 390 passed + 1 skip，`resolve.test.ts` 21 例，web 349 passed（含 `resolve-rows.test.ts` 11 例含 `urlAuthority` + `Editors.test.tsx` 指定解析 4），`vite build` 127 模块、`index-*.js` 277.91 kB / gzip 91.86；`roundtrip.live` 真 curl 对拍 `--resolve` 通过。**同日两处返修**：UI 面板改成两列（域名 + IP，端口从 URL 打底，运维只敲 IP）+ 选项页分组重排；白屏修复（`useWorkbench` 初始化/load 都过 `normalizeSpec`，M4a 前存的旧草稿缺 `options.resolve` 不再崩首屏，core 补回归用例） |
 | **M4b** | transport 抽象 + agent 注册表 + 执行机下拉（先用 mock agent 测，不发真请求） | 中 | 单测覆盖 transport 分派；UI 能选机器 |
 | **M4c** | agent 服务端：argv 调 curl + token + SSRF allowlist（含 `--resolve` IP 校验）+ 限流/超时/体积 + 审计 | 高（安全） | 元数据段/未放行内网的**拒绝**测试；注入测试 |
 | **M4d** | 真机联调 + round-trip 对拍 + 文档回填 | — | 一台真 ECS 用 `--resolve` 打通内网目标 |
