@@ -7,7 +7,7 @@ import type {
   ResolveEntry
 } from '@curlviz/core'
 import { applyRowEdit, needsDraftRow } from '../lib/kv-rows'
-import { applyResolveEdit, BLANK_RESOLVE, needsDraftResolveRow } from '../lib/resolve-rows'
+import { applyResolveEdit, needsDraftResolveRow, urlAuthority } from '../lib/resolve-rows'
 import { KeyValueTable } from './KeyValueTable'
 
 interface BodyProps {
@@ -183,27 +183,34 @@ function MultipartTable({
 }
 
 /**
- * 「指定解析」（`--resolve <host>:<port>:<addr>`）三列表，可加多条。
+ * 「指定解析」（`--resolve <host>:<port>:<addr>`）两列表，可加多条。
  *
+ * 端口不在这里填：curl 的 --resolve 三段虽都必需，但常态下 host 与端口就等于请求 URL 里的，
+ * 用户真正要决定的只有 IP。所以新行的 host/端口由 URL 打底（seed 传进 applyResolveEdit），
+ * 只有 addr（IP）是"这行算不算真数据"的触发字段（见 lib/resolve-rows）。
  * core 里每条 resolve 都会输出，没有 enabled 位，所以只留删除、不留勾选。
- * 端口为 0 视作空白（新行 / 还没填），输入框显示空而不是 0；生成时按契约原样落字符串。
- * 与键值表同一套末行草稿算术（见 lib/resolve-rows）。
  */
-function ResolveTable({ rows, onChange }: { rows: ResolveEntry[]; onChange: (rows: ResolveEntry[]) => void }) {
-  const body: ResolveEntry[] = needsDraftResolveRow(rows) ? [...rows, BLANK_RESOLVE] : rows
-  const set = (i: number, patch: Partial<ResolveEntry>): void => onChange(applyResolveEdit(rows, i, patch))
-  const num = (v: string): number => {
-    const n = Number(v)
-    return Number.isFinite(n) && n >= 0 && n <= 65535 ? Math.round(n) : 0
-  }
+function ResolveTable({
+  rows,
+  urlHost,
+  urlPort,
+  onChange
+}: {
+  rows: ResolveEntry[]
+  urlHost: string
+  urlPort: number
+  onChange: (rows: ResolveEntry[]) => void
+}) {
+  const seed: ResolveEntry = { host: urlHost, port: urlPort, addr: '' }
+  const body: ResolveEntry[] = needsDraftResolveRow(rows) ? [...rows, seed] : rows
+  const set = (i: number, patch: Partial<ResolveEntry>): void => onChange(applyResolveEdit(rows, i, patch, seed))
 
   return (
     <table className="kv">
       <thead>
         <tr>
           <th>域名 host</th>
-          <th style={{ width: '7rem' }}>端口</th>
-          <th style={{ width: '18rem' }}>解析到的 IP</th>
+          <th style={{ width: '20rem' }}>解析到的 IP</th>
           <th style={{ width: '3rem' }} />
         </tr>
       </thead>
@@ -211,16 +218,10 @@ function ResolveTable({ rows, onChange }: { rows: ResolveEntry[]; onChange: (row
         {body.map((row, i) => (
           <tr key={i}>
             <td>
-              <input value={row.host} onChange={(e) => set(i, { host: e.target.value })} placeholder="api.example.com" />
-            </td>
-            <td>
               <input
-                type="number"
-                min={0}
-                max={65535}
-                value={row.port === 0 ? '' : row.port}
-                onChange={(e) => set(i, { port: num(e.target.value) })}
-                placeholder="443"
+                value={row.host}
+                onChange={(e) => set(i, { host: e.target.value })}
+                placeholder={urlHost || 'api.example.com'}
               />
             </td>
             <td>
@@ -232,7 +233,7 @@ function ResolveTable({ rows, onChange }: { rows: ResolveEntry[]; onChange: (row
               />
             </td>
             <td>
-              {/* 草稿行不在 rows 里，没有"删掉它"这回事：打字那一刻它才成为一行 */}
+              {/* 草稿行不在 rows 里，没有"删掉它"这回事：填上 IP 那一刻它才成为一行 */}
               {i < rows.length && (
                 <button className="mini" onClick={() => onChange(rows.filter((_, k) => k !== i))} title="删除">
                   ✕
@@ -299,11 +300,13 @@ export function AuthEditor({ auth, onChange }: { auth: AuthConfig; onChange: (a:
 export function OptionsEditor({
   options,
   rawArgs,
+  url,
   onChange,
   onDropRawArg
 }: {
   options: RequestOptions
   rawArgs: string[]
+  url: string
   onChange: (o: RequestOptions) => void
   onDropRawArg: (index: number) => void
 }) {
@@ -312,72 +315,109 @@ export function OptionsEditor({
     const n = Number(v)
     return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0
   }
+  const { host: urlHost, port: urlPort } = urlAuthority(url)
 
   return (
-    <div>
-      <div className="row">
-        <label style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
-          <input
-            type="checkbox"
-            checked={options.followRedirects}
-            onChange={(e) => set({ followRedirects: e.target.checked })}
-          />
-          -L 跟随重定向
-        </label>
-        <label style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
-          <input type="checkbox" checked={options.insecure} onChange={(e) => set({ insecure: e.target.checked })} />
-          -k 跳过证书校验
-        </label>
-        <label style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
-          <input
-            type="checkbox"
-            checked={options.compressed}
-            onChange={(e) => set({ compressed: e.target.checked })}
-          />
-          --compressed
-        </label>
-      </div>
+    <div className="opts">
+      <section className="opt-sec">
+        <h3>传输行为</h3>
+        <div className="opt-checks">
+          <label className="inline-chk">
+            <input
+              type="checkbox"
+              checked={options.followRedirects}
+              onChange={(e) => set({ followRedirects: e.target.checked })}
+            />
+            -L 跟随重定向
+          </label>
+          <label className="inline-chk">
+            <input type="checkbox" checked={options.insecure} onChange={(e) => set({ insecure: e.target.checked })} />
+            -k 跳过证书校验
+          </label>
+          <label className="inline-chk">
+            <input type="checkbox" checked={options.compressed} onChange={(e) => set({ compressed: e.target.checked })} />
+            --compressed 压缩
+          </label>
+        </div>
+        <div className="opt-grid">
+          <div>
+            <label>
+              总时限 <span className="mono">-m</span>
+            </label>
+            <input
+              type="number"
+              min={0}
+              step={100}
+              value={options.timeoutMs}
+              onChange={(e) => set({ timeoutMs: num(e.target.value) })}
+              placeholder="毫秒，0=不限"
+            />
+          </div>
+          <div>
+            <label>
+              建连时限 <span className="mono">--connect-timeout</span>
+            </label>
+            <input
+              type="number"
+              min={0}
+              step={100}
+              value={options.connectTimeoutMs}
+              onChange={(e) => set({ connectTimeoutMs: num(e.target.value) })}
+              placeholder="毫秒，0=系统默认"
+            />
+          </div>
+        </div>
+      </section>
 
-      <div className="row" style={{ marginTop: '0.6rem' }}>
-        <div style={{ width: '11rem' }}>
-          <label>总时限 -m（毫秒，0=不限）</label>
-          <input type="number" min={0} step={100} value={options.timeoutMs} onChange={(e) => set({ timeoutMs: num(e.target.value) })} />
+      <section className="opt-sec">
+        <h3>身份与代理</h3>
+        <div className="opt-grid">
+          <div>
+            <label>
+              自定义 UA <span className="mono">-A</span>
+            </label>
+            <input
+              value={options.userAgent}
+              onChange={(e) => set({ userAgent: e.target.value })}
+              placeholder="留空 = curl 默认 UA"
+            />
+          </div>
+          <div>
+            <label>
+              代理 <span className="mono">-x</span>
+            </label>
+            <input
+              value={options.proxy}
+              onChange={(e) => set({ proxy: e.target.value })}
+              placeholder="http://127.0.0.1:8888"
+            />
+          </div>
         </div>
-        <div style={{ width: '12rem' }}>
-          <label>建连时限 --connect-timeout（毫秒）</label>
-          <input
-            type="number"
-            min={0}
-            step={100}
-            value={options.connectTimeoutMs}
-            onChange={(e) => set({ connectTimeoutMs: num(e.target.value) })}
-          />
-        </div>
-      </div>
+      </section>
 
-      <div className="row" style={{ marginTop: '0.6rem' }}>
-        <div className="grow">
-          <label>-A 自定义 UA</label>
-          <input value={options.userAgent} onChange={(e) => set({ userAgent: e.target.value })} />
-        </div>
-        <div className="grow">
-          <label>-x 代理</label>
-          <input value={options.proxy} onChange={(e) => set({ proxy: e.target.value })} placeholder="http://127.0.0.1:8888" />
-        </div>
-      </div>
-
-      <div style={{ marginTop: '0.7rem' }}>
-        <label>--resolve 指定解析（把某个域名钉到指定 IP，可加多条）</label>
-        <ResolveTable rows={options.resolve} onChange={(resolve) => set({ resolve })} />
+      <section className="opt-sec">
+        <h3>
+          指定解析 <span className="mono">--resolve</span>
+        </h3>
+        <ResolveTable
+          rows={options.resolve}
+          urlHost={urlHost}
+          urlPort={urlPort}
+          onChange={(resolve) => set({ resolve })}
+        />
         <p className="muted">
-          「解析到的 IP」要写成 v4/v6 字面量（v6 带方括号），端口 0–65535；填成主机名或非法值，curl 会报
-          (49)。整行留空不会输出。
+          把某个域名钉到指定 IP（写成 v4/v6 字面量，v6 带方括号）。端口沿用上方地址栏（当前{' '}
+          <span className="mono">
+            {urlHost || '—'}:{urlPort}
+          </span>
+          ），不必在此填；填成主机名或非法值 curl 会报 (49)。IP 留空的行不输出。
         </p>
-      </div>
+      </section>
 
       {rawArgs.length > 0 && (
-        <div style={{ marginTop: '0.7rem' }}>
-          <label>原样保留的片段（本工具还没法变成字段的 flag，复制时会照原样带上）</label>
+        <section className="opt-sec">
+          <h3>原样保留的片段</h3>
+          <p className="muted">本工具还没法变成字段的 flag，复制时会照原样带上。</p>
           <ul className="notes">
             {rawArgs.map((raw, i) => (
               <li key={i} className="mono" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
@@ -388,7 +428,7 @@ export function OptionsEditor({
               </li>
             ))}
           </ul>
-        </div>
+        </section>
       )}
     </div>
   )

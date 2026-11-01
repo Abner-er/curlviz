@@ -365,6 +365,61 @@ button.mini {
   min-width: 0;
 }
 
+/*
+  选项页分组。原来这些控件是一摞宽度不一的裸字段（-m 11rem、connect 12rem、UA/代理各占半），
+  看着乱；改成「传输行为 / 身份与代理 / 指定解析」三块，各带小标题，同类放一起、同列对齐。
+  长标签缩短，"毫秒 0=不限"这类说明挪进 placeholder。网格用 auto-fit minmax 自己折列，
+  不写 @media —— 免得踩这文件末尾那条"响应式覆盖必须排在基础规则之后"的坑。
+*/
+.opts {
+  display: grid;
+  gap: 0.95rem;
+}
+
+.opt-sec > h3 {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--fg-dim);
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.opt-sec > h3 .mono {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  color: var(--placeholder);
+}
+
+.opt-grid label .mono {
+  color: var(--placeholder);
+  font-weight: 400;
+}
+
+.opt-checks {
+  display: flex;
+  gap: 1.1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.6rem;
+}
+
+.opt-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.5rem 0.9rem;
+}
+
+.opt-sec .muted {
+  margin: 0.5rem 0 0;
+  line-height: 1.5;
+}
+
 table.kv {
   width: 100%;
   border-collapse: collapse;

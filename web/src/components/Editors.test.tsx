@@ -50,42 +50,51 @@ describe('multipart 表的末行草稿', () => {
 })
 
 /**
- * 「指定解析」表的末行草稿 + 端口空白显示。
+ * 「指定解析」表的末行草稿 + 端口从 URL 打底。
  *
- * 它同样没复用 KeyValueTable（三列 host/端口/IP，且没有 enabled 勾选位），
- * 判据从两格扩到三格是最容易写漏的地方，故单独钉一组。
+ * 它同样没复用 KeyValueTable（两列 host/IP，端口不在表里，且没有 enabled 勾选位），
+ * 判据从"三格全空"改成"只看 addr"是最容易写漏的地方，故单独钉一组。
  */
-function renderOptions(resolve: ResolveEntry[]): string {
+function renderOptions(resolve: ResolveEntry[], url = ''): string {
   const options: RequestOptions = { ...blankRequest().options, resolve }
   return renderToString(
-    <OptionsEditor options={options} rawArgs={[]} onChange={() => undefined} onDropRawArg={() => undefined} />
+    <OptionsEditor
+      options={options}
+      rawArgs={[]}
+      url={url}
+      onChange={() => undefined}
+      onDropRawArg={() => undefined}
+    />
   ).replaceAll('<!-- -->', '')
 }
 
-describe('指定解析表的末行草稿', () => {
-  it('一条都没有时也给一行可打字的空行，且草稿行不带删除按钮', () => {
+describe('指定解析表：两列（域名 + IP），端口从 URL 打底不再手填', () => {
+  it('一条都没有时给一行草稿，域名格 placeholder 兜 api.example.com，草稿行不带删除按钮', () => {
     const html = renderOptions([])
     expect(tbodyRows(html)).toBe(1)
     expect(html).toContain('placeholder="api.example.com"')
     expect(delButtons(html)).toBe(0)
   })
 
-  it('末行有内容 → 补一行草稿（两行），真行带一个删除按钮', () => {
+  it('末行填了 IP → 补一行草稿（两行），真行带一个删除按钮', () => {
     const html = renderOptions([{ host: 'a.test', port: 443, addr: '93.184.216.34' }])
     expect(tbodyRows(html)).toBe(2)
     expect(delButtons(html)).toBe(1)
   })
 
-  it('末行三格全空（存了个空行）→ 不再补第二行，但它是真数据所以带删除按钮', () => {
-    const html = renderOptions([{ host: '', port: 0, addr: '' }])
+  it('存了个 IP 还空的行：不再补第二行，但它是真数据所以带删除按钮', () => {
+    const html = renderOptions([{ host: 'a.test', port: 0, addr: '' }])
     expect(tbodyRows(html)).toBe(1)
     expect(delButtons(html)).toBe(1)
   })
 
-  it('端口 0 的半截行在端口输入框里显示空，而不是把 0 画出来', () => {
-    const html = renderOptions([{ host: 'a.test', port: 0, addr: '10.0.0.5' }])
-    // 端口列是唯一带 max="65535" 的输入框，用它定位；页里另一个数字框（--connect-timeout）本就合法显示 0
-    expect(html).toContain('value="a.test"')
-    expect(html).toContain('max="65535" placeholder="443" value=""')
+  it('新行的域名从 URL 打底，且面板里不再有端口输入框（说明仍回显端口值）', () => {
+    const html = renderOptions([], 'https://pin.test:8443/x')
+    // 草稿行 host 用 URL 的域名预填
+    expect(html).toContain('value="pin.test"')
+    // 端口输入框整个没了：不再有带 65535 上限的数字框
+    expect(html).not.toContain('max="65535"')
+    // 但端口值在说明里回显，让人知道会按 8443 生成
+    expect(html).toContain('8443')
   })
 })

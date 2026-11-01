@@ -315,6 +315,7 @@ export function App() {
       <OptionsEditor
         options={wb.spec.options}
         rawArgs={wb.spec.rawArgs}
+        url={wb.spec.url}
         onChange={(o) => wb.patch({ options: o })}
         onDropRawArg={(i) => wb.patch({ rawArgs: wb.spec.rawArgs.filter((_, k) => k !== i) })}
       />
