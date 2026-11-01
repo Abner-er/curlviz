@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { KNOWN_METHODS } from '@curlviz/core'
 import type { SendActionId, SendMenu } from '../lib/send-actions'
 import { sendBadge } from '../lib/send-actions'
+import { ensureScheme } from '../lib/url-scheme'
 
 interface Props {
   name: string
@@ -110,6 +111,7 @@ export function RequestBar(props: Props) {
           aria-label="URL"
           spellCheck={false}
           onChange={(e) => props.onUrl(e.target.value)}
+          onBlur={() => props.onUrl(ensureScheme(url))}
         />
 
         {/*
