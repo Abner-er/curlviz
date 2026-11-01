@@ -24,6 +24,7 @@ export {
   buildUrlWithQuery,
   encodeKeepingVars
 } from './generate'
+export { buildArgv, type AgentArgv } from './agent-argv'
 export {
   extractVars,
   resolveText,

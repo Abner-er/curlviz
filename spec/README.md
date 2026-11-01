@@ -449,3 +449,80 @@ M2 必须先定的四条规矩（分享格式、脱敏遮盖形状、多环境�
 | 与 `--doh-url` / `--dns-servers` / `--interface` 的关系 | 本契约为**只做 `--resolve`**；其余留作同类扩展，M4a 不撑爆 options |
 
 **fixture**：`fixtures/resolve.json` 共 6 条 canonical（单条 IPv4、多条、无括号 IPv6、带括号 `[::1]`、与 `-k`/`-x` 混排钉顺序、非法值 `x.test:80:notanip` 落 rawArgs 且 `resolve:[]`）。`contract.test.ts` 三条绊线随之更新：用例总数 79→85、文件数 6→7、文件名清单加 `resolve.json`。
+
+
+---
+
+## 13. 远程执行 wire 契约（M4b/M4c：transport 抽象 + agent /exec）
+
+> 状态：设计已定，代码实现中（本节先于代码落地，安全红线正文在 docs/PLAN.md §17.2，本节只钉字节长什么样）。
+
+前端把一条 spec 交给用户自己的 ECS 跑真 curl，这条通道的线上格式在这里钉死：web 的 agent-transport 与 agent/ 服务端都按本节实现，Kotlin 侧将来复用同一形状。
+
+为什么需要它：--resolve（§12）这类 flag 浏览器 fetch 表达不了（§10.1 #5），只有真 curl 能跑。远程执行把它交给用户指定的机器执行，产品承诺从数据全本地改述为不经过第三方云、执行发生在用户自己指定的机器上。
+
+### 13.1 请求（web -> agent）
+
+```http
+POST {baseUrl}/exec
+Content-Type: application/json
+X-Curlviz-Token: <token>
+Origin: <页面 origin>
+
+{ "v": 1, "spec": { ...CurlSpec v1，变量已替换... } }
+```
+
+- 只认 `v:1`，版本不符直接拒绝，不猜。
+- `spec` 必须是已替换变量的完整 CurlSpec（web 发送前跑过 `resolveSpec`），agent 侧不再碰 `{{}}`。
+- `X-Curlviz-Token` 是唯一安全边界：agent 配了 token 就必须逐字匹配；token 允许为空——当 agent 挡在 OIDC/mTLS 反代后面时不设自己的 token（对应 §17.3 决策③）。缺 token 而 agent 又要求 token，一律拒。
+- agent 校验 `Origin` 白名单，并要求带 `X-Curlviz-Token` 这个自定义头（借预检挡 CSRF 与 DNS-rebinding）。
+- token 存储按决策②：执行机注册表 `{id,name,baseUrl}` 存 localStorage，token 只存会话内存、每次开页重填，不落盘。
+
+### 13.2 argv 生成（agent 内部，来自 core `buildArgv`）
+
+agent 不拼 shell 字符串，直接 `spawn('curl', argv, {shell:false})`，注入安全由 argv 逐 token 构造保证。`buildArgv` 复用 `generateCurl` + `tokenize`（两端已有、已测），保证 argv 逐 token 等于复制到终端那条命令在 bash 下传给 curl 的词表。
+
+- 凭据（basic-auth、Bearer、Cookie 头、proxy 里的用户名密码）从 argv 摘出来，改走 `--config -` 的 stdin，不进 `ps`。`buildArgv` 返回 `{ argv, stdinConfig }`。
+- `rawArgs` 在 agent 路径照常执行（区别于浏览器路径的完全跳过，见 §10.1 #5）：agent 就是真 curl，rawArgs 是保真的关键，且经 `tokenize` 剥掉 bash 引号后逐 token 交给 spawn，不构成注入。这条差异必须在结果里如实说明。
+- 编码一律按 POSIX，不看 web 侧的 `quoteStyle`：argv 是 token 数组、没有 shell 引号可言，windows/cmd 的引号风格只影响复制到终端的文本，不影响 agent 执行。
+
+### 13.3 响应（agent -> web，同形 SendReport）
+
+成功（HTTP 200，body 是 JSON）：
+
+```json
+{ "ok": true, "response": {
+  "status": 200, "statusText": "OK", "ok": true,
+  "headers": [["server","nginx"]],
+  "contentType": "application/json",
+  "bodyBase64": "eyJ...", "totalBytes": 1234, "sizeExact": true, "truncated": false,
+  "ttfbMs": 41, "totalMs": 88
+} }
+```
+
+- 响应体走 base64（HTTP 文本通道）；web 侧解成 `Uint8Array` 填进 `SentResponse`，其余字段一一对应，这样响应视图一行不用改。
+- 截断上限与 web 的 `MAX_PREVIEW_BYTES` 对齐，`truncated` / `sizeExact` 语义同 web 读流。
+- 红线：agent 不得持久化请求体与响应体，只留脱敏审计（谁 / 何时 / 目标 / exit）。
+
+失败（HTTP 非 2xx，或 200 但 `{"ok":false,...}`）：
+
+```json
+{ "ok": false, "failure": { "kind": "agent-rejected", "message": "...", "hint": "..." } }
+```
+
+新增 `FailureKind`（`web/src/types.ts`，Kotlin M3 复用同一分类）：
+
+| kind | 触发 |
+|---|---|
+| `agent-rejected` | SSRF / allowlist 拒绝：目标段未放行、`--resolve` 里那个 IP 命中元数据或私网、缺 token、`Origin` 不符 |
+| `agent-error` | agent 自身 500 / curl 起不来 / 返回体不合契约 |
+| `unreachable` | 到 agent 的网络失败（DNS、连不上、TLS 握手） |
+| `timeout` | 超 `-m` 或前端总时限（与浏览器路径同名，复用） |
+
+`hint` 必须给出可执行的下一步，不编造原因。
+
+### 13.4 契约边界与登记
+
+- `buildArgv` 是生成方向的新纯函数，只读 CurlSpec、不碰网络与文件系统，两端可用；Kotlin 侧可照抄同一 argv 语义。它不改变 parse⇄generate 的往返契约，`CURLSPEC_VERSION` 仍为 1。
+- `/exec` 的 wire 形状不进 §1–§12 那批 parse/generate fixture（那些钉的是 parse⇄generate 往返）；它由 web 的 transport 单测（mock agent，不发真请求）和 agent 的拒绝/注入测试（M4c）分别钉住。
+- 分期实现进度回填到 docs/PLAN.md §17.5 的表；M4d（真机联调）需要用户提供 baseUrl 与 token。
