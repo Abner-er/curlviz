@@ -52,10 +52,14 @@ describe('App 首屏', () => {
     expect(html.indexOf('cmd.exe')).toBeGreaterThan(html.indexOf('等价 curl'))
   })
 
-  it('没填 URL 时发送按钮禁用，并说明原因（不给一个点了没反应的按钮）', () => {
+  it('没填 URL 时发送按钮给禁用态 + 悬停说明（aria-disabled 而非原生 disabled，好让 title 弹），不给一个点了没反应的按钮', () => {
     const html = firstPaint()
-    expect(html).toContain('disabled')
-    expect(html).toContain('填了 URL 才能发送')
+    // 只截发送那颗：整页里"分享"那颗按钮合法地用原生 disabled（点了没意义），
+    // 不能拿"整页不许出现 disabled=\"\""当判据 —— 那会误伤那颗。
+    const send = /<button[^>]*class="primary is-off"[^>]*>发送<\/button>/.exec(html)?.[0] ?? ''
+    expect(send).toContain('aria-disabled="true"')
+    expect(send).toContain('title="填了 URL 才能发送"')
+    expect(send).not.toContain('disabled=""')
   })
 
   it('首屏不开抽屉：库的内容不在这儿，但操作栏要看得见"有没有库、库里几条"', () => {

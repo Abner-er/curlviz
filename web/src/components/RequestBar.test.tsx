@@ -66,10 +66,13 @@ describe('发送分裂按钮', () => {
     expect(html).not.toContain('>发送<')
   })
 
-  it('URL 没填时主按钮禁用，▾ 仍可用（复制命令不需要能发出去）', () => {
+  it('URL 没填时主按钮走 aria-disabled + is-off（不用原生 disabled，好让悬停 title 能弹），▾ 仍可用（复制命令不需要能发出去）', () => {
     const html = render({ canSend: false })
-    expect(html).toContain('class="primary" disabled')
-    expect(html).toContain('填了 URL 才能发送')
+    expect(html).toContain('class="primary is-off')
+    expect(html).toContain('aria-disabled="true"')
+    expect(html).toContain('title="填了 URL 才能发送"')
+    // 关键：不是原生 disabled —— 原生 disabled 会吃掉指针事件，title 悬停根本弹不出来
+    expect(html).not.toContain('disabled=""')
     expect(html.split('aria-haspopup="menu"').length - 1).toBe(1)
   })
 })

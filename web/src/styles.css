@@ -1141,6 +1141,24 @@ button.primary.danger:hover:not(:disabled) {
   border-color: var(--err);
 }
 
+/*
+  发送按钮的"没填 URL"禁用态。用的是 aria-disabled 而不是原生 disabled（见 RequestBar 那段），
+  所以 button:disabled 那条观感规则命不中，得自己复刻；而且它没真 disabled，
+  上面 button.primary:hover:not(:disabled) 会照常提亮，这里把它压回去
+  —— 权重 0,4,2 > 0,3,2，不靠 DOM 顺序活着。
+*/
+button.is-off {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.send-split > button.is-off:hover:not(:disabled),
+.send-split > button.is-off:active:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  filter: none;
+}
+
 /* 发送 ▾ 的菜单 */
 .menu {
   position: absolute;

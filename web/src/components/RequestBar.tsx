@@ -112,12 +112,18 @@ export function RequestBar(props: Props) {
           onChange={(e) => props.onUrl(e.target.value)}
         />
 
+        {/*
+          URL 没填用 aria-disabled 而非原生 disabled：原生 disabled 吃掉指针事件，
+          title 悬停在真实浏览器里根本不弹（这轮就是把提示挪到悬停）。
+          所以让它照常可悬停可聚焦，只在 onClick 挡住发送，.is-off 复刻禁用外观。
+        */}
         <div className="send-split" ref={wrapRef}>
           <button
             type="button"
-            className={sending ? 'primary danger' : 'primary'}
-            onClick={sending ? props.onCancel : () => void props.onSend()}
-            disabled={!sending && !canSend}
+            className={sending ? 'primary danger' : canSend ? 'primary' : 'primary is-off'}
+            aria-disabled={!sending && !canSend ? 'true' : undefined}
+            title={!sending && !canSend ? '填了 URL 才能发送' : undefined}
+            onClick={sending ? props.onCancel : () => void (canSend && props.onSend())}
           >
             {sending ? '取消' : '发送'}
           </button>
@@ -156,8 +162,6 @@ export function RequestBar(props: Props) {
           )}
         </div>
       </div>
-
-      {!canSend && <p className="muted">填了 URL 才能发送。</p>}
     </section>
   )
 }
