@@ -127,7 +127,7 @@ G:/AI_LLM/Curl/
 | M1 | Web MVP：表单 + 实时 curl + 粘贴导入 + fetch 发送 + 响应视图 + 本地持久化 | 浏览器可用的闭环 |
 | M2 | Web 增强：collections / 环境变量 / 历史 / 导入导出 / 分享 | 可日常使用 |
 | M3 | 安卓 MVP：Compose UI + OkHttp 执行 + Room 存储 + 复制分享 curl | APK 闭环 |
-| M4 | 双端互通（JSON/二维码）+ 本地 agent + 打磨（快捷键、脱敏、时间分解） | 双端齐活 |
+| M4 | 双端互通（JSON/二维码）+ 本地 agent + 打磨（快捷键、脱敏、时间分解） | 双端齐活。**注意**：2026-11-01 起 M4 的"agent"已扩展为"多台公网 ECS 远程执行 + `--resolve` 指定解析 + 团队共用"，设计稿见 §17（未实现），不再是原口径的本机 127.0.0.1 agent |
 
 ## 6. 风险与边界（提前排雷）
 
@@ -457,3 +457,58 @@ web **316 passed**（25 文件，269 → 316，新增 47 条：`lib/split.test.t
 web **334 passed**（25 → 27 文件，316 → 334，新增 18 条：`lib/kv-rows.test.ts` 10、
 `components/KeyValueTable.test.tsx` 4 → 8、`components/Editors.test.tsx` 4）；
 `vite build` 126 模块，`index-*.js` 274.18 kB / gzip 90.59，CSS 16.16 kB / gzip 4.01 未变。
+
+## 17. 设计稿：远程执行 + 指定解析（M4，未实现，2026-11-01）
+
+> **状态：设计稿，代码未写。** 本节与 §13–§16 不同——那几节是"已实现后回填的实测"，本节是"开工前把边界、安全、契约钉死"的方案。列在这里是为了避免代码写到一半发现跨端契约要推翻。落地后请把对应小节改成本文档正文口径（去掉"设计稿"标记）。
+
+**需求（用户原话）**："要加一个修改使用指定解析的功能，而且我还想把它部署在线上，但是可以使用指定公网的 ECS 机器来执行 curl 操作。" 经三个岔路口确认，选定的是**最重的组合**：`--resolve` 钉 IP + 一个前端选多台 ECS + 团队共用。
+
+**为什么这两件事其实是同一件事**：`--resolve`（把域名强制解析到指定 IP）是浏览器 `fetch` 根本做不到的操作，只有真 curl 能执行；而"用指定 ECS 跑 curl"正是提供真 curl 的那条通道。所以顺序必然是**先有执行通道、`--resolve` 才有意义**。§10.1 #5 早就登记了"rawArgs 在 fetch 路径完全跳过"——而 `--resolve` 现在正躺在 `rawArgs` 里，它天生就是远程执行的活。
+
+**这改了产品的哪条承诺**：原定位"免登录、不过云、数据全本地"。远程执行后改述为——**不经过第三方云，执行发生在用户自己指定的机器（ECS）上**；前端仍是纯静态、无账户、无遥测；集合/历史/环境仍存在浏览器本地。红线：ECS agent **不得持久化请求体与响应体**，只留脱敏审计。
+
+### 17.1 三层架构
+
+| 层 | 位置 | 现状（已核对代码） | 要做 |
+|---|---|---|---|
+| 数据模型 | `packages/core-ts` + `spec/` | `--resolve` 落 `rawArgs`，`RequestOptions` 无对应字段 | 加 `options.resolve: {host;port;addr}[]`，parse/generate round-trip，fixture + 契约（见 §17.4） |
+| 传输通道 | `web/src/lib/http.ts:sendSpec` | 写死 `fetchImpl`（**可注入，好改**） | 抽象 `transport: 'browser' \| {kind:'agent'; id}`；agent 路径把 spec POST 出去、拿回**同形 `SendReport`**，响应视图一行不改 |
+| 执行机注册表 | `web`（localStorage） | 无 | 多台 ECS `{id,name,baseUrl,token}` + 发送旁下拉；token 存储策略见 §17.3 |
+| agent 服务 | `agent/`（新目录，Node 单文件） | 无 | `/exec`：argv 调系统 curl、鉴权、SSRF allowlist、限流/超时/体积上限、审计（见 §17.2） |
+
+### 17.2 安全红线（team + 公网 = 最高危，不是可选项）
+
+一台公网 ECS "谁发命令它跑谁" = **开放代理 / SSRF 跳板**。最致命路径：用 `--resolve` 把任意域名钉到云元数据端点 `169.254.169.254`，**偷走这台 ECS 的云账号临时凭据**。因此 agent 必须：
+
+- **目标 allowlist，默认拒绝**；且要校验 `--resolve` 里那个 **IP 本身**、不只是域名。运维打内网节点是正当需求，但必须是"操作员显式放行的段"，不是"任意内网"。
+- 硬禁元数据段（`169.254.169.254` / `fd00::/8` 等）与未放行的回环/私网段。
+- **argv 数组** `spawn('curl', [...], {shell:false})`，绝不拼 shell 字符串（防注入）；`-u`/token/cookie 走 `--config -`（stdin），不进 `ps`。
+- token 强随机、按团队发、可轮换（**token 是唯一安全边界**）；校验 `Origin` + 要求自定义头，挡 CSRF 与 DNS-rebinding。
+- 限并发 / 限流 / 请求体上限 / 响应体上限 / 强制 `-m` 超时；审计记"谁/何时/目标/exit"，**脱敏、不落响应体**。
+- 部署：agent 挡在 nginx + 真 TLS 后面。**同源部署**（前端与 agent 同域）还能顺带免掉 CORS 与 https→http 混合内容两类坑。
+
+### 17.3 一个未定子决策（开工 M4b 前必须拍板）
+
+token 存哪：① localStorage 明文（最省事，但共用机器上别人能翻走）；② 只存会话内存、每次开页重填；③ 前端根本不持密钥，agent 挡在 OIDC / mTLS 反代后。**团队共用场景倾向 ②或③**，①只在"其实就我一个人用"时勉强可接受。
+
+### 17.4 契约影响（这是 v2 级改动，先改 spec 再动码）
+
+- 把 `--resolve` 从 `rawArgs` 提成结构化字段，正是 §10.1 #1 预告的"rawArgs 结构化 = 契约 v2"。要同步：`types.ts`、`parse.ts`、`generate.ts`、`spec/README.md`、`fixtures/`。**安卓 M3 未实现前**，Kotlin 侧要么先不支持远程执行、要么必须跟着认这个字段。
+- **迁移**：老集合文件里 `--resolve` 还在 `rawArgs` → 解析要"读旧写新"兼容（`rawArgs` 里出现的 `--resolve x:y:z` 也提成 `options.resolve`，生成统一走新字段）。
+- 契约草案见 `spec/README.md` §12（同样标着未实现）。
+
+### 17.5 分期（每期独立可测可提交）
+
+| 期 | 内容 | 风险 | 可测判据 |
+|---|---|---|---|
+| **M4a** | `--resolve` 进 core：parse/generate round-trip + fixture + spec/README + 单测 + UI「指定解析」面板（复用末行草稿行组件） | 低（纯本地） | 契约全绿；`roundtrip.live` 对拍 `--resolve`；表单可编辑 |
+| **M4b** | transport 抽象 + agent 注册表 + 执行机下拉（先用 mock agent 测，不发真请求） | 中 | 单测覆盖 transport 分派；UI 能选机器 |
+| **M4c** | agent 服务端：argv 调 curl + token + SSRF allowlist（含 `--resolve` IP 校验）+ 限流/超时/体积 + 审计 | 高（安全） | 元数据段/未放行内网的**拒绝**测试；注入测试 |
+| **M4d** | 真机联调 + round-trip 对拍 + 文档回填 | — | 一台真 ECS 用 `--resolve` 打通内网目标 |
+
+建议**先做 M4a**：风险最低、把跨端契约钉死、解锁后续全部，且能直接复用刚建好的末行草稿行组件。
+
+### 17.6 明确不在本设计内
+
+多请求文档 tab、缓存 ECS 响应、给 agent 做 Web 控制台、第三方 SaaS 托管执行（与"不过第三方云"直接冲突）。

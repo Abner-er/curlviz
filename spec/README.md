@@ -399,3 +399,46 @@ M2 必须先定的四条规矩（分享格式、脱敏遮盖形状、多环境�
   保留 id、活动环境指不到就当没指）。这是「用户可能在 DevTools 里手改过、或版本不同字段有增减」的防线，属于端的实现细节。
 - **`openRef`**：记「编辑器当前打开的是哪个集合里的哪条请求」，只有本端有意义；
   跨端传过来的集合导入后 id 会变，所以导入路径不允许沿用它传来的 id。
+
+---
+
+## 12. 设计稿：`--resolve` 结构化（契约 v2 候选，未实现）
+
+> **状态：设计稿，代码未写。** 实现落地前，`--resolve` 仍按 §10.1 原样躺在 `rawArgs` 里，本节只是把 M4a 要定的契约先钉下来。落地后把本节改成正文口径（去掉"设计稿"），并同步 `types.ts` / `parse.ts` / `generate.ts` / fixtures。
+
+**要解决的 flag**：`curl --resolve <host>:<port>:<addr>`（可重复）。运维用它把某个域名强制解析到指定 IP——绕开 DNS、直连某台内网/灰度节点、切 hosts 之前先验目标。**浏览器 `fetch` 表达不了它**（§10.1 #5），只有真 curl（M4 agent）能跑，所以它是"远程执行"落地的第一批结构化 flag。
+
+**拟新增字段**（`RequestOptions`）：
+
+```jsonc
+"options": {
+  // …现有字段不变…
+  "resolve": [
+    { "host": "api.internal", "port": 443, "addr": "10.0.0.5" }
+  ]
+}
+```
+
+**解析方向**：`--resolve` / `-resolve`，值 `host:port:addr`。`port` 必须是十进制数字；`addr` 是 IP。
+IPv6 的 `addr` 自带冒号，切分规则按 curl 实际行为定（**未定，见下方待确认**）。命中后落进 `options.resolve`，**不再进 `rawArgs`**。
+
+**生成方向**：每条输出 `--resolve '<host>:<port>:<addr>'`，位置放在 §4.1 输出顺序的"选项"段（`-x` 之后、`headers` 之前），多条按数组原序。`canonical` 用例依赖这个位置，Kotlin 照抄。
+
+**三条 round-trip 义务**（与 §3 同一套）：
+
+1. parse→generate 逐字符相等（canonical fixture）；
+2. `parse(generate(parse(curl)))` 规范化后等于 `parse(curl)`（幂等，§3.3）；
+3. 生成出的每条 `--resolve` 用真实 curl 对拍，确认线路确实打到了 `addr` 那个 IP。
+
+**迁移兼容（读旧写新）**：老集合文件 / 老粘贴命令里 `--resolve` 还在 `rawArgs`。解析侧要**同时认**——`rawArgs` 里出现的 `--resolve x:y:z` 提成 `options.resolve`；生成侧统一走新字段，不再往 `rawArgs` 回写。给一个兼容期，避免旧数据一打开就"丢了那条 resolve"。
+
+**必须实测、不许凭记忆写进 fixture 的待确认项**（沿用 `book-curl.json` "抄实测不凭记忆"的纪律）：
+
+| 待确认 | 为什么要实测 |
+|---|---|
+| IPv6 `addr` 的确切切分（`host:port:addr` 里 addr 含冒号时从哪切、要不要方括号） | curl 的切法不是"按冒号三段"，凭直觉写会解析错 |
+| 同一 `host` 多条 `--resolve`（不同 port）curl 是否都生效 | 决定 `resolve[]` 允许重复 host 还是按 host 归并 |
+| `addr` 能不能写成主机名（而非 IP） | 若能，字段名叫 `addr` 且校验"必须 IP"就是错的 |
+| 与 `--doh-url` / `--dns-servers` / `--interface` 的关系 | 本设计**只做 `--resolve`**，其余留作同类扩展，别一次把 options 撑爆 |
+
+**拟新增 fixture 文件**：`fixtures/resolve.json`，先放 2–3 条（单条 `--resolve`、多条、与 `-k`/`-x` 混排）。M4a 开工时用真实 curl 8.19 对拍后回填期望值，并同步 `contract.test.ts` 里那三条绊线（用例总数 / 文件数 / 文件名清单）。
