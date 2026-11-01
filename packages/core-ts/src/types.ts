@@ -75,6 +75,21 @@ export interface AuthConfig {
   bearer: { token: string }
 }
 
+/**
+ * `--resolve <host>:<port>:<addr>` 的一条记录。addr 必须是 IP（v4 或 v6，可带方括号）。
+ *
+ * 判据抄自 curl 8.19.0 实测：端口非数字、addr 写成主机名、IPv4 后多余段，一律
+ * `curl: (49) Could not parse CURLOPT_RESOLVE entry`。所以解析侧遇到不合法的值
+ * **不结构化**、原样留在 `rawArgs`（见 parseResolveEntry）。
+ */
+export interface ResolveEntry {
+  host: string
+  /** 十进制端口，0–65535 */
+  port: number
+  /** IP 字面量；IPv6 可带方括号，原样保留以便逐字节往返 */
+  addr: string
+}
+
 export interface RequestOptions {
   /** `-L` */
   followRedirects: boolean
@@ -90,6 +105,8 @@ export interface RequestOptions {
   userAgent: string
   /** `-x` */
   proxy: string
+  /** `--resolve`，可重复。空数组=不输出。 */
+  resolve: ResolveEntry[]
 }
 
 /** 解析后无法映射到 CurlSpec 的原始 token 片段 —— 逃生通道，保证往返不丢数据。 */
@@ -225,7 +242,8 @@ export function createDefaultOptions(): RequestOptions {
     timeoutMs: 10000,
     connectTimeoutMs: 0,
     userAgent: '',
-    proxy: ''
+    proxy: '',
+    resolve: []
   }
 }
 
@@ -263,7 +281,8 @@ export function createParseDefaultSpec(): CurlSpec {
     timeoutMs: 0,
     connectTimeoutMs: 0,
     userAgent: '',
-    proxy: ''
+    proxy: '',
+    resolve: []
   }
   return spec
 }
@@ -271,4 +290,59 @@ export function createParseDefaultSpec(): CurlSpec {
 /** 深拷贝，UI 态与发送态之间来回倒腾时避免共享引用。 */
 export function cloneSpec(spec: CurlSpec): CurlSpec {
   return JSON.parse(JSON.stringify(spec)) as CurlSpec
+}
+
+/* ------------------------------------------------------------------ */
+/* --resolve 解析（判据来自 curl 8.19.0 实测，见 ResolveEntry 注释）    */
+/* ------------------------------------------------------------------ */
+
+function isIPv4(s: string): boolean {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s)
+  if (m === null) return false
+  // 每段 0–255 且不许前导零（`01.2.3.4` 交给 rawArgs，别猜 curl 认不认）
+  return m.slice(1).every((x) => Number(x) <= 255 && String(Number(x)) === x)
+}
+
+function isIPv6(s: string): boolean {
+  if (s.indexOf(':') === -1) return false
+  if (!/^[0-9a-fA-F:]+$/.test(s)) return false // 含 IPv4 内嵌段（::ffff:1.2.3.4）会在此判 false → 落 rawArgs，登记为已知限制
+  const halves = s.split('::')
+  if (halves.length > 2) return false // :: 至多一次
+  const groups = (seg: string): string[] => (seg === '' ? [] : seg.split(':'))
+  const hexGroup = (g: string): boolean => /^[0-9a-fA-F]{1,4}$/.test(g)
+  if (halves.length === 2) {
+    const left = groups(halves[0] as string)
+    const right = groups(halves[1] as string)
+    if (left.length + right.length > 7) return false // :: 至少代表一组，否则凑不满 8 段
+    return [...left, ...right].every(hexGroup)
+  }
+  const parts = s.split(':')
+  return parts.length === 8 && parts.every(hexGroup)
+}
+
+/**
+ * 把 `--resolve` 的值 `host:port:addr` 拆成结构化条目；不合法返回 `null`。
+ *
+ * 切分规则抄自 curl 8.19.0：**第一个冒号前=host，第二个冒号前=port，其余全是 addr**
+ * （所以 IPv6 的 `a.test:80:2001:db8::1` 里 addr=`2001:db8::1`，`a.test:80:[::1]` 里 addr=`[::1]`）。
+ * port 必须是 0–65535 的十进制；addr 必须是合法 IP（方括号在校验时剥掉，存储与生成时**原样保留**以便逐字节往返）。
+ *
+ * 安全取向：拿不准的一律返回 null，让调用方把原值留在 `rawArgs`。宁可"这条没结构化、
+ * 但粘到终端照样跑"，也不要"结构化出一条 curl 报 (49) 的命令"。
+ */
+export function parseResolveEntry(value: string): ResolveEntry | null {
+  const first = value.indexOf(':')
+  if (first <= 0) return null // host 不能空、也不能没冒号
+  const host = value.slice(0, first)
+  const rest = value.slice(first + 1)
+  const second = rest.indexOf(':')
+  if (second < 0) return null // 缺 addr 段
+  const portText = rest.slice(0, second)
+  const addr = rest.slice(second + 1)
+  if (addr === '' || !/^\d+$/.test(portText)) return null
+  const port = Number(portText)
+  if (port > 65535) return null
+  const bareAddr = /^\[(.*)\]$/.exec(addr)?.[1] ?? addr // 剥方括号只用于校验；存储保留原样
+  if (!isIPv4(bareAddr) && !isIPv6(bareAddr)) return null
+  return { host, port, addr }
 }

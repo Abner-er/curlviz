@@ -137,6 +137,9 @@ function optionArgs(o: RequestOptions, q: (v: string) => string): string[] {
   if (o.connectTimeoutMs > 0) out.push(`--connect-timeout ${msToSeconds(o.connectTimeoutMs)}`)
   if (o.userAgent !== '') out.push(`-A ${q(o.userAgent)}`)
   if (o.proxy !== '') out.push(`-x ${q(o.proxy)}`)
+  // 位置在选项段末尾（-x 之后、headers 之前），符合 spec/README §4.1；canonical 用例依赖这个顺序。
+  // addr 原样输出（含 IPv6 方括号），保证 parse→generate 逐字节相等。
+  for (const r of o.resolve) out.push(`--resolve ${q(`${r.host}:${r.port}:${r.addr}`)}`)
   return out
 }
 

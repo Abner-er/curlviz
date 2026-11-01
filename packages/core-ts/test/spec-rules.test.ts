@@ -25,7 +25,8 @@ function blank(): CurlSpec {
     timeoutMs: 0,
     connectTimeoutMs: 0,
     userAgent: '',
-    proxy: ''
+    proxy: '',
+    resolve: []
   }
   return spec
 }

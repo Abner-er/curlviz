@@ -12,6 +12,7 @@ import {
   COLLECTION_FORMAT,
   CURLSPEC_VERSION,
   createDefaultSpec,
+  parseResolveEntry,
   type AuthConfig,
   type BodyType,
   type Collection,
@@ -19,7 +20,8 @@ import {
   type Environment,
   type MultipartParam,
   type Param,
-  type RequestBody
+  type RequestBody,
+  type ResolveEntry
 } from './types'
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -123,7 +125,21 @@ function normalizeOptions(value: unknown): CurlSpec['options'] {
     timeoutMs: asNumber(o['timeoutMs'], def.timeoutMs),
     connectTimeoutMs: asNumber(o['connectTimeoutMs'], 0),
     userAgent: asString(o['userAgent'], ''),
-    proxy: asString(o['proxy'], '')
+    proxy: asString(o['proxy'], ''),
+    // 复用 parseResolveEntry 当唯一判据：把 {host,port,addr} 重拼成字符串再校验，
+    // 免得在归一化里写第二套 IP 规则（两套判据迟早对不齐）。坏条目直接丢。
+    resolve: Array.isArray(o['resolve'])
+      ? (o['resolve'] as unknown[])
+          .map((e) => {
+            const r = asRecord(e)
+            const host = asString(r['host'], '')
+            const port = asNumber(r['port'], -1)
+            const addr = asString(r['addr'], '')
+            if (host === '' || addr === '') return null
+            return parseResolveEntry(`${host}:${port}:${addr}`)
+          })
+          .filter((e): e is ResolveEntry => e !== null)
+      : []
   }
 }
 
@@ -146,6 +162,22 @@ export function normalizeSpec(value: unknown): CurlSpec {
     options: normalizeOptions(o['options']),
     rawArgs
   }
+  // 读旧写新：M4a 之前 --resolve 还躺在 rawArgs 里（`--resolve 'host:port:addr'`）。
+  // 这里把能安全剥出来的抬进 options.resolve，抬不动的（复杂 shell 引号，见 §10.1 #1）原样留着。
+  const remainingRaw: string[] = []
+  for (const raw of spec.rawArgs) {
+    const m = /^-{1,2}resolve\s+(.*)$/.exec(raw)
+    if (m === null) {
+      remainingRaw.push(raw)
+      continue
+    }
+    const valueRaw = m[1] as string
+    const value = /^(['"])(.*)\1$/.exec(valueRaw)?.[2] ?? valueRaw
+    const entry = parseResolveEntry(value)
+    if (entry === null) remainingRaw.push(raw)
+    else spec.options.resolve.push(entry)
+  }
+  spec.rawArgs = remainingRaw
   // 丢了这枚标记，`-X POST … -L` 重新生成时会变成隐式 POST，301 后 curl 改发 GET。
   if (o['methodExplicit'] === true) spec.methodExplicit = true
   return spec

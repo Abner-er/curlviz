@@ -21,6 +21,7 @@ import { encodeKeepingVars } from './generate'
 import {
   CurlParseError,
   createParseDefaultSpec,
+  parseResolveEntry,
   type CurlSpec,
   type MultipartParam,
   type Param,
@@ -612,6 +613,15 @@ class Assembler {
         if (this.spec.url === '') this.spec.url = arg.value
         else this.spec.rawArgs.push(`${arg.flag.raw} ${arg.valueToken?.raw ?? ''}`.trim())
         return
+      case 'resolve': {
+        if (arg.value === null) return this.missing(arg)
+        const entry = parseResolveEntry(arg.value)
+        // 拆不出合法 host:port:IP（curl 自己会报 (49)）就原样留 rawArgs，别硬塞进 options.resolve
+        // 生成出一条跑不通的命令。可重复，所以是 push。
+        if (entry === null) return this.keep(arg)
+        this.spec.options.resolve.push(entry)
+        return
+      }
       default: {
         // 认得但不映射（-s/-v/-o/--retry/--cacert…）与完全未知，一律原样保留
         this.keep(arg)

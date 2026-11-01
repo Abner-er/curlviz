@@ -1,0 +1,101 @@
+{
+  "$comment": "CurlViz 契约用例：--resolve host:port:addr 的结构化。判据抄自 curl 8.19.0 实测（见 spec/README §12）：端口必须数字、addr 必须是 IP，否则 curl 报 (49)，我们则不结构化、原样留 rawArgs。canonical 形态即生成器输出形态（选项段末尾、headers 之前）。",
+  "fixtures": [
+    {
+      "id": "resolve-single-ipv4",
+      "title": "单条 --resolve：域名钉到 IPv4",
+      "tags": ["resolve", "options"],
+      "canonical": true,
+      "curl": "curl 'http://api.internal/' \\\n  --resolve 'api.internal:80:10.0.0.5'",
+      "spec": {
+        "method": "GET",
+        "url": "http://api.internal/",
+        "options": {
+          "resolve": [{ "host": "api.internal", "port": 80, "addr": "10.0.0.5" }]
+        }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "resolve-multiple",
+      "title": "多条 --resolve 各自成条，按原顺序",
+      "tags": ["resolve", "options"],
+      "canonical": true,
+      "curl": "curl 'http://api.internal/' \\\n  --resolve 'api.internal:80:10.0.0.5' \\\n  --resolve 'static.internal:443:10.0.0.9'",
+      "spec": {
+        "method": "GET",
+        "url": "http://api.internal/",
+        "options": {
+          "resolve": [
+            { "host": "api.internal", "port": 80, "addr": "10.0.0.5" },
+            { "host": "static.internal", "port": 443, "addr": "10.0.0.9" }
+          ]
+        }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "resolve-ipv6",
+      "title": "IPv6 addr 不带方括号：第二个冒号后全是 addr",
+      "tags": ["resolve", "options", "ipv6"],
+      "canonical": true,
+      "curl": "curl 'http://v6.internal/' \\\n  --resolve 'v6.internal:80:2001:db8::1'",
+      "spec": {
+        "method": "GET",
+        "url": "http://v6.internal/",
+        "options": {
+          "resolve": [{ "host": "v6.internal", "port": 80, "addr": "2001:db8::1" }]
+        }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "resolve-ipv6-bracket",
+      "title": "IPv6 addr 带方括号：原样保留以便逐字节往返",
+      "tags": ["resolve", "options", "ipv6"],
+      "canonical": true,
+      "curl": "curl 'http://v6.internal/' \\\n  --resolve 'v6.internal:443:[::1]'",
+      "spec": {
+        "method": "GET",
+        "url": "http://v6.internal/",
+        "options": {
+          "resolve": [{ "host": "v6.internal", "port": 443, "addr": "[::1]" }]
+        }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "resolve-mixed-options",
+      "title": "--resolve 排在选项段末尾（-k -x 之后、headers 之前）",
+      "tags": ["resolve", "options", "order"],
+      "canonical": true,
+      "curl": "curl 'https://api.internal/x' \\\n  -k \\\n  -x 'http://127.0.0.1:8080' \\\n  --resolve 'api.internal:443:10.0.0.5'",
+      "spec": {
+        "method": "GET",
+        "url": "https://api.internal/x",
+        "options": {
+          "insecure": true,
+          "proxy": "http://127.0.0.1:8080",
+          "resolve": [{ "host": "api.internal", "port": 443, "addr": "10.0.0.5" }]
+        }
+      },
+      "expectWarnings": []
+    },
+    {
+      "id": "resolve-invalid-stays-raw",
+      "title": "addr 不是 IP（curl 报 49）→ 不结构化，原样留 rawArgs",
+      "tags": ["resolve", "rawargs"],
+      "canonical": true,
+      "curl": "curl 'http://x.test/' \\\n  --resolve 'x.test:80:notanip'",
+      "spec": {
+        "method": "GET",
+        "url": "http://x.test/",
+        "options": {
+          "resolve": []
+        },
+        "rawArgs": ["--resolve 'x.test:80:notanip'"]
+      },
+      "expectWarnings": []
+    }
+  ]
+}
