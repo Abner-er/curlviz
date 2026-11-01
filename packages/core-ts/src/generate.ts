@@ -139,7 +139,11 @@ function optionArgs(o: RequestOptions, q: (v: string) => string): string[] {
   if (o.proxy !== '') out.push(`-x ${q(o.proxy)}`)
   // 位置在选项段末尾（-x 之后、headers 之前），符合 spec/README §4.1；canonical 用例依赖这个顺序。
   // addr 原样输出（含 IPv6 方括号），保证 parse→generate 逐字节相等。
-  for (const r of o.resolve) out.push(`--resolve ${q(`${r.host}:${r.port}:${r.addr}`)}`)
+  // addr 为空的条目跳过：UI 里"域名/端口已从 URL 打底、IP 还没敲"的半截草稿行不该输出非法的 `host:port:`。
+  for (const r of o.resolve) {
+    if (r.addr === '') continue
+    out.push(`--resolve ${q(`${r.host}:${r.port}:${r.addr}`)}`)
+  }
   return out
 }
 

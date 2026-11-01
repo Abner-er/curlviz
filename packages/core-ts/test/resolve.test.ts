@@ -139,4 +139,15 @@ describe('generateCurl：--resolve 位置与形态', () => {
     const { spec } = parseCurl(`curl 'https://a.test/'`)
     expect(generateCurl(spec, { multiline: false })).not.toContain('--resolve')
   })
+
+  it('addr 为空的半截草稿行不输出（避免非法 host:port:），同批好条目照出', () => {
+    const { spec } = parseCurl(`curl 'https://a.test/'`)
+    spec.options.resolve = [
+      { host: 'a.test', port: 443, addr: '' },
+      { host: 'b.test', port: 80, addr: '93.184.216.34' }
+    ]
+    const out = generateCurl(spec, { multiline: false })
+    expect(out).not.toContain('a.test:443:')
+    expect(out).toContain(`--resolve 'b.test:80:93.184.216.34'`)
+  })
 })
