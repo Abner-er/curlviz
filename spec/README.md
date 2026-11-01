@@ -402,13 +402,13 @@ M2 必须先定的四条规矩（分享格式、脱敏遮盖形状、多环境�
 
 ---
 
-## 12. 设计稿：`--resolve` 结构化（契约 v2 候选，未实现）
+## 12. `--resolve` 结构化（已实现，契约仍为 v1）
 
-> **状态：设计稿，代码未写。** 实现落地前，`--resolve` 仍按 §10.1 原样躺在 `rawArgs` 里，本节只是把 M4a 要定的契约先钉下来。落地后把本节改成正文口径（去掉"设计稿"），并同步 `types.ts` / `parse.ts` / `generate.ts` / fixtures。
+> **状态：已实现。** `--resolve` 已从 `rawArgs` 提升为 `options.resolve` 结构化字段，`types.ts` / `parse.ts` / `generate.ts` / `collection.ts` / fixtures 全部落地，契约测试与真实 curl 对拍均绿。判据抄自本机 curl 8.19.0 实测（见下方"实测结论"），不是凭记忆写的。
 
-**要解决的 flag**：`curl --resolve <host>:<port>:<addr>`（可重复）。运维用它把某个域名强制解析到指定 IP——绕开 DNS、直连某台内网/灰度节点、切 hosts 之前先验目标。**浏览器 `fetch` 表达不了它**（§10.1 #5），只有真 curl（M4 agent）能跑，所以它是"远程执行"落地的第一批结构化 flag。
+**解决的 flag**：`curl --resolve <host>:<port>:<addr>`（可重复）。运维用它把某个域名强制解析到指定 IP——绕开 DNS、直连某台内网/灰度节点、切 hosts 之前先验目标。**浏览器 `fetch` 表达不了它**（§10.1 #5），只有真 curl（M4 agent）能跑，所以它是"远程执行"落地的第一批结构化 flag。
 
-**拟新增字段**（`RequestOptions`）：
+**字段**（`RequestOptions`，可重复）：
 
 ```jsonc
 "options": {
@@ -419,26 +419,31 @@ M2 必须先定的四条规矩（分享格式、脱敏遮盖形状、多环境�
 }
 ```
 
-**解析方向**：`--resolve` / `-resolve`，值 `host:port:addr`。`port` 必须是十进制数字；`addr` 是 IP。
-IPv6 的 `addr` 自带冒号，切分规则按 curl 实际行为定（**未定，见下方待确认**）。命中后落进 `options.resolve`，**不再进 `rawArgs`**。
+`addr` 原样存字符串（IPv6 带方括号时连方括号一起留），端口是 0–65535 的十进制整数。字段是**新增且可选**：缺失时 `normalizeOptions` 补 `[]`，所以 `CURLSPEC_VERSION` 仍是 1，没有触发整份 v2 迁移。
 
-**生成方向**：每条输出 `--resolve '<host>:<port>:<addr>'`，位置放在 §4.1 输出顺序的"选项"段（`-x` 之后、`headers` 之前），多条按数组原序。`canonical` 用例依赖这个位置，Kotlin 照抄。
+**解析方向**：`--resolve host:port:addr`。切分规则抄 curl 8.19.0 实测——**第一个冒号前=host，第二个冒号前=port，其余全是 addr**（所以 IPv6 的 `a.test:80:2001:db8::1` 里 addr=`2001:db8::1`，`a.test:80:[::1]` 里 addr=`[::1]`）。命中且合法才落进 `options.resolve`，**不再进 `rawArgs`**。单横线 `-resolve` **不是**合法别名（curl 把它当打包短选项 `-r esolve…`，实测报 "URL rejected: Port number was not a decimal"），故不认。
 
-**三条 round-trip 义务**（与 §3 同一套）：
+**非法值一律不结构化**：port 非数字、addr 写成主机名、IPv4 后多余段等，curl 都报 `curl: (49) Could not parse CURLOPT_RESOLVE entry`。所以 `parseResolveEntry` 判 `null` 时把原 token **原样留在 `rawArgs`**——宁可"这条没结构化、但粘回终端照样能跑（同样报 49，不改变原行为）"，也不要"结构化出一条我们替用户臆造的命令"。校验 IP 与否也只信 `parseResolveEntry` 这一个判据：`normalizeOptions` 不另写一套 validator，而是把 `{host,port,addr}` 重新拼成字符串再喂回它，避免两处漂移。
 
-1. parse→generate 逐字符相等（canonical fixture）；
+**已知限制**：IPv6 内嵌 IPv4 形式（`::ffff:1.2.3.4`）会被 `isIPv6` 判 false → 落 `rawArgs`（不结构化）。登记在案，将来若运维真用到再补。
+
+**生成方向**：每条输出 `--resolve '<host>:<port>:<addr>'`（addr 里若带方括号，剥括号只用于校验，存储与生成**原样保留**以便逐字节往返），位置在 §4.1 输出顺序的"选项"段（`-x` 之后、headers 之前），多条按数组原序。`canonical` 用例钉住这个位置，Kotlin 照抄。同一 host 允许出现多条（不同 port），`resolve[]` 不归并。
+
+**三条 round-trip 义务**（与 §3 同一套，均已过）：
+
+1. parse→generate 逐字符相等（`fixtures/resolve.json` 的 canonical 用例）；
 2. `parse(generate(parse(curl)))` 规范化后等于 `parse(curl)`（幂等，§3.3）；
-3. 生成出的每条 `--resolve` 用真实 curl 对拍，确认线路确实打到了 `addr` 那个 IP。
+3. 生成出的每条 `--resolve` 用真实 curl 对拍（`roundtrip.live`，含 `--resolve` 分片）。
 
-**迁移兼容（读旧写新）**：老集合文件 / 老粘贴命令里 `--resolve` 还在 `rawArgs`。解析侧要**同时认**——`rawArgs` 里出现的 `--resolve x:y:z` 提成 `options.resolve`；生成侧统一走新字段，不再往 `rawArgs` 回写。给一个兼容期，避免旧数据一打开就"丢了那条 resolve"。
+**迁移兼容（读旧写新）**：`normalizeSpec` 会扫描 `rawArgs`，把其中 `--resolve x:y:z`（先剥成对引号）用 `parseResolveEntry` 验证——合法就提成 `options.resolve`、从 `rawArgs` 删掉；非法就原样留。所以旧集合文件 / 旧粘贴命令里的裸 `--resolve` 一打开就升级成新字段，不会"丢了那条 resolve"，生成侧也统一走新字段。
 
-**必须实测、不许凭记忆写进 fixture 的待确认项**（沿用 `book-curl.json` "抄实测不凭记忆"的纪律）：
+**实测结论**（原"待确认项"的落定）：
 
-| 待确认 | 为什么要实测 |
+| 原待确认 | 实测结论（curl 8.19.0） |
 |---|---|
-| IPv6 `addr` 的确切切分（`host:port:addr` 里 addr 含冒号时从哪切、要不要方括号） | curl 的切法不是"按冒号三段"，凭直觉写会解析错 |
-| 同一 `host` 多条 `--resolve`（不同 port）curl 是否都生效 | 决定 `resolve[]` 允许重复 host 还是按 host 归并 |
-| `addr` 能不能写成主机名（而非 IP） | 若能，字段名叫 `addr` 且校验"必须 IP"就是错的 |
-| 与 `--doh-url` / `--dns-servers` / `--interface` 的关系 | 本设计**只做 `--resolve`**，其余留作同类扩展，别一次把 options 撑爆 |
+| IPv6 `addr` 的确切切分 | 第二个冒号之后整段都是 addr；方括号可选，剥括号仅用于校验，存储/生成保留原样 |
+| 同一 host 多条 `--resolve`（不同 port）是否都生效 | 都生效；`resolve[]` 允许重复 host，不裁剪 |
+| `addr` 能否写成主机名 | **不能**（报 49），字段叫 addr 且"必须 IP"是对的 |
+| 与 `--doh-url` / `--dns-servers` / `--interface` 的关系 | 本契约为**只做 `--resolve`**；其余留作同类扩展，M4a 不撑爆 options |
 
-**拟新增 fixture 文件**：`fixtures/resolve.json`，先放 2–3 条（单条 `--resolve`、多条、与 `-k`/`-x` 混排）。M4a 开工时用真实 curl 8.19 对拍后回填期望值，并同步 `contract.test.ts` 里那三条绊线（用例总数 / 文件数 / 文件名清单）。
+**fixture**：`fixtures/resolve.json` 共 6 条 canonical（单条 IPv4、多条、无括号 IPv6、带括号 `[::1]`、与 `-k`/`-x` 混排钉顺序、非法值 `x.test:80:notanip` 落 rawArgs 且 `resolve:[]`）。`contract.test.ts` 三条绊线随之更新：用例总数 79→85、文件数 6→7、文件名清单加 `resolve.json`。

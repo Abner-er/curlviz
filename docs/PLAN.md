@@ -127,7 +127,7 @@ G:/AI_LLM/Curl/
 | M1 | Web MVP：表单 + 实时 curl + 粘贴导入 + fetch 发送 + 响应视图 + 本地持久化 | 浏览器可用的闭环 |
 | M2 | Web 增强：collections / 环境变量 / 历史 / 导入导出 / 分享 | 可日常使用 |
 | M3 | 安卓 MVP：Compose UI + OkHttp 执行 + Room 存储 + 复制分享 curl | APK 闭环 |
-| M4 | 双端互通（JSON/二维码）+ 本地 agent + 打磨（快捷键、脱敏、时间分解） | 双端齐活。**注意**：2026-11-01 起 M4 的"agent"已扩展为"多台公网 ECS 远程执行 + `--resolve` 指定解析 + 团队共用"，设计稿见 §17（未实现），不再是原口径的本机 127.0.0.1 agent |
+| M4 | 双端互通（JSON/二维码）+ 本地 agent + 打磨（快捷键、脱敏、时间分解） | 双端齐活。**注意**：2026-11-01 起 M4 的"agent"已扩展为"多台公网 ECS 远程执行 + `--resolve` 指定解析 + 团队共用"，方案见 §17——**M4a（`--resolve` 结构化进 core + UI 面板）已实现**，M4b–d（远程执行 / agent 服务）仍是设计稿；不再是原口径的本机 127.0.0.1 agent |
 
 ## 6. 风险与边界（提前排雷）
 
@@ -458,13 +458,13 @@ web **334 passed**（25 → 27 文件，316 → 334，新增 18 条：`lib/kv-ro
 `components/KeyValueTable.test.tsx` 4 → 8、`components/Editors.test.tsx` 4）；
 `vite build` 126 模块，`index-*.js` 274.18 kB / gzip 90.59，CSS 16.16 kB / gzip 4.01 未变。
 
-## 17. 设计稿：远程执行 + 指定解析（M4，未实现，2026-11-01）
+## 17. 远程执行 + 指定解析（M4：M4a 已实现 · M4b–d 设计稿，2026-11-01）
 
-> **状态：设计稿，代码未写。** 本节与 §13–§16 不同——那几节是"已实现后回填的实测"，本节是"开工前把边界、安全、契约钉死"的方案。列在这里是为了避免代码写到一半发现跨端契约要推翻。落地后请把对应小节改成本文档正文口径（去掉"设计稿"标记）。
+> **状态：M4a 已落地，M4b–d 仍是开工前的设计稿。** M4a（数据模型层：`--resolve` 结构化进 `options.resolve`，parse/generate round-trip + fixture + 单测 + UI「指定解析」面板）代码已写完，契约全绿、`roundtrip.live` 对拍通过、表单可编辑；契约正文口径见 `spec/README.md` §12。下面的 §17.1–§17.4 里"传输通道 / 执行机注册表 / agent 服务"这三层（M4b–d）尚未动码，保留为"开工前把边界、安全、契约钉死"的方案，落地时再把对应小节改成正文口径。
 
 **需求（用户原话）**："要加一个修改使用指定解析的功能，而且我还想把它部署在线上，但是可以使用指定公网的 ECS 机器来执行 curl 操作。" 经三个岔路口确认，选定的是**最重的组合**：`--resolve` 钉 IP + 一个前端选多台 ECS + 团队共用。
 
-**为什么这两件事其实是同一件事**：`--resolve`（把域名强制解析到指定 IP）是浏览器 `fetch` 根本做不到的操作，只有真 curl 能执行；而"用指定 ECS 跑 curl"正是提供真 curl 的那条通道。所以顺序必然是**先有执行通道、`--resolve` 才有意义**。§10.1 #5 早就登记了"rawArgs 在 fetch 路径完全跳过"——而 `--resolve` 现在正躺在 `rawArgs` 里，它天生就是远程执行的活。
+**为什么这两件事其实是同一件事**：`--resolve`（把域名强制解析到指定 IP）是浏览器 `fetch` 根本做不到的操作，只有真 curl 能执行；而"用指定 ECS 跑 curl"正是提供真 curl 的那条通道。所以顺序必然是**先有执行通道、`--resolve` 才有意义**。§10.1 #5 早就登记了"rawArgs 在 fetch 路径完全跳过"——而 `--resolve` 此前正躺在 `rawArgs` 里（M4a 已把它提成 `options.resolve` 结构化字段），它天生就是远程执行的活。
 
 **这改了产品的哪条承诺**：原定位"免登录、不过云、数据全本地"。远程执行后改述为——**不经过第三方云，执行发生在用户自己指定的机器（ECS）上**；前端仍是纯静态、无账户、无遥测；集合/历史/环境仍存在浏览器本地。红线：ECS agent **不得持久化请求体与响应体**，只留脱敏审计。
 
@@ -472,7 +472,7 @@ web **334 passed**（25 → 27 文件，316 → 334，新增 18 条：`lib/kv-ro
 
 | 层 | 位置 | 现状（已核对代码） | 要做 |
 |---|---|---|---|
-| 数据模型 | `packages/core-ts` + `spec/` | `--resolve` 落 `rawArgs`，`RequestOptions` 无对应字段 | 加 `options.resolve: {host;port;addr}[]`，parse/generate round-trip，fixture + 契约（见 §17.4） |
+| 数据模型 | `packages/core-ts` + `spec/` | **已实现（M4a）**：`options.resolve: {host;port;addr}[]`，parse/generate round-trip，非法值留 `rawArgs`，读旧写新迁移 | 已完成：`fixtures/resolve.json`（6 条）+ 契约绊线 + 单测 + UI「指定解析」面板；正文口径见 `spec/README.md` §12 |
 | 传输通道 | `web/src/lib/http.ts:sendSpec` | 写死 `fetchImpl`（**可注入，好改**） | 抽象 `transport: 'browser' \| {kind:'agent'; id}`；agent 路径把 spec POST 出去、拿回**同形 `SendReport`**，响应视图一行不改 |
 | 执行机注册表 | `web`（localStorage） | 无 | 多台 ECS `{id,name,baseUrl,token}` + 发送旁下拉；token 存储策略见 §17.3 |
 | agent 服务 | `agent/`（新目录，Node 单文件） | 无 | `/exec`：argv 调系统 curl、鉴权、SSRF allowlist、限流/超时/体积上限、审计（见 §17.2） |
@@ -494,20 +494,20 @@ token 存哪：① localStorage 明文（最省事，但共用机器上别人能
 
 ### 17.4 契约影响（这是 v2 级改动，先改 spec 再动码）
 
-- 把 `--resolve` 从 `rawArgs` 提成结构化字段，正是 §10.1 #1 预告的"rawArgs 结构化 = 契约 v2"。要同步：`types.ts`、`parse.ts`、`generate.ts`、`spec/README.md`、`fixtures/`。**安卓 M3 未实现前**，Kotlin 侧要么先不支持远程执行、要么必须跟着认这个字段。
-- **迁移**：老集合文件里 `--resolve` 还在 `rawArgs` → 解析要"读旧写新"兼容（`rawArgs` 里出现的 `--resolve x:y:z` 也提成 `options.resolve`，生成统一走新字段）。
-- 契约草案见 `spec/README.md` §12（同样标着未实现）。
+- 把 `--resolve` 从 `rawArgs` 提成结构化字段，正是 §10.1 #1 预告的"rawArgs 结构化 = 契约 v2"。**M4a 已在 TS 侧落地**：`types.ts`、`parse.ts`、`generate.ts`、`spec/README.md`、`fixtures/resolve.json` 全部同步，字段是新增可选（缺失补 `[]`），`CURLSPEC_VERSION` 仍为 1、没触发整份 v2 迁移。**安卓 M3 未实现前**，Kotlin 侧要么先不支持远程执行、要么必须跟着认这个字段（尚未动）。
+- **迁移**：老集合文件里 `--resolve` 还在 `rawArgs` → 解析"读旧写新"兼容（`normalizeSpec` 把 `rawArgs` 里的 `--resolve x:y:z` 经 `parseResolveEntry` 验证后提成 `options.resolve`，合法才提、非法原样留，生成统一走新字段）。TS 侧已实现。
+- 契约正文口径见 `spec/README.md` §12（**已实现**）。
 
 ### 17.5 分期（每期独立可测可提交）
 
 | 期 | 内容 | 风险 | 可测判据 |
 |---|---|---|---|
-| **M4a** | `--resolve` 进 core：parse/generate round-trip + fixture + spec/README + 单测 + UI「指定解析」面板（复用末行草稿行组件） | 低（纯本地） | 契约全绿；`roundtrip.live` 对拍 `--resolve`；表单可编辑 |
+| **M4a ✅** | `--resolve` 进 core：parse/generate round-trip + fixture + spec/README + 单测 + UI「指定解析」面板（复用末行草稿行组件） | 低（纯本地） | **已完成**：契约全绿（`contract.test.ts` 234 例含 `resolve.json` 6 条），core 388 passed + 1 skip，`resolve.test.ts` 20 例，web 345 passed（含 `resolve-rows.test.ts` 7 + `Editors.test.tsx` 指定解析 4），`vite build` 127 模块、`index-*.js` 277.40 kB / gzip 91.64；`roundtrip.live` 真 curl 对拍 `--resolve` 通过 |
 | **M4b** | transport 抽象 + agent 注册表 + 执行机下拉（先用 mock agent 测，不发真请求） | 中 | 单测覆盖 transport 分派；UI 能选机器 |
 | **M4c** | agent 服务端：argv 调 curl + token + SSRF allowlist（含 `--resolve` IP 校验）+ 限流/超时/体积 + 审计 | 高（安全） | 元数据段/未放行内网的**拒绝**测试；注入测试 |
 | **M4d** | 真机联调 + round-trip 对拍 + 文档回填 | — | 一台真 ECS 用 `--resolve` 打通内网目标 |
 
-建议**先做 M4a**：风险最低、把跨端契约钉死、解锁后续全部，且能直接复用刚建好的末行草稿行组件。
+M4a 已按这个顺序落完：风险最低、把跨端契约钉死、解锁后续全部，并直接复用了刚建好的末行草稿行组件。**下一步是 M4b**（transport 抽象 + 执行机下拉，先 mock agent 不发真请求），但开工前必须先拍 §17.3 的 token 存储决策。
 
 ### 17.6 明确不在本设计内
 

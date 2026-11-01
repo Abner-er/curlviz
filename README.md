@@ -56,8 +56,9 @@ npm run build && npm run preview --workspace @curlviz/web   # 看成品用，htt
 | M2.8 跨域预检判定 | ✅ 发送前提醒 + 失败定向 hint + headless Chrome 页面级探针；只动网页端，`CurlSpec` 与 fixtures 未变 |
 | M2.9 布局对齐 Postman | ✅ 三栏常驻（操作栏 / 工作台 / 可拖分隔条 / 结果）+ 分裂发送按钮；1024 宽下响应卡从视口外（y=1028）进到视口内，`CurlSpec` 与 fixtures 仍未变 |
 | M2.9.1 末行常驻草稿行 | ✅ Query / Headers / 表单 / multipart 四张表末行永远留一行空行，打字即落该行；「＋ 添加一行 / 添加一项」按钮去掉，草稿行不进数据（角标与 curl 输出实测不变） |
+| M4a `--resolve` 结构化 + 指定解析面板 | ✅ `--resolve` 从 `rawArgs` 提成 `options.resolve`（parse/generate round-trip、非法值留 `rawArgs`、读旧写新迁移、`fixtures/resolve.json` 6 条 + 契约绊线）；选项 tab 新增「指定解析」三列表（复用末行草稿行）；契约全绿、`roundtrip.live` 真 curl 对拍通过 |
 | M3 安卓 MVP | 未开始 |
-| M4 双端互通 + 本地 agent | 未开始 |
+| M4 远程执行 / agent | M4a 已实现（见上）；M4b–d（多 ECS 远程执行、传输通道抽象、agent 服务）仍是设计稿，方案见 `docs/PLAN.md` §17 |
 
 ## M2 多了什么
 
@@ -210,6 +211,19 @@ npm run build && npm run preview --workspace @curlviz/web   # 看成品用，htt
   316 → 334，新增 18 条：`lib/kv-rows.test.ts` 10、`components/KeyValueTable.test.tsx` 4 → 8、
   `components/Editors.test.tsx` 4），`vite build` 126 模块、产物 274.18 kB（gzip 90.59）、
   CSS 16.16 kB（gzip 4.01）未变。
+
+## M4a `--resolve` 结构化 + 指定解析面板（2026-11-01）
+
+M4 的"远程执行 + 指定解析"设计里，M4a 是风险最低、且把跨端契约钉死的第一步（纯本地，不发真请求）。它把此前只能躺在 `rawArgs` 里的 `--resolve` 提成结构化的 `options.resolve`，并给网页端一张「指定解析」表。
+
+- **为什么先做它**：`--resolve host:port:addr`（把域名强制解析到指定 IP）是浏览器 `fetch` 根本表达不了的操作（`spec/README.md` §10.1 #5），只有真 curl 能跑；而 M4 的执行通道（远程 ECS / agent）还没影。先把数据模型与契约钉死，后续 M4b–d 才不用回头推翻跨端字段。设计全貌见 `docs/PLAN.md` §17。
+- **判据抄实测，不凭记忆**：切分与校验全部对着本机 curl 8.19.0 跑出来的行为写——第一个冒号前是 host、第二个冒号前是 port、其余整段是 addr（所以 IPv6 的 `a.test:80:2001:db8::1` 里 addr=`2001:db8::1`，带方括号的 `a.test:80:[::1]` 原样保留 `[::1]`）；port 必须 0–65535 十进制；addr 必须是合法 IP。实测单横线 `-resolve` **不是**合法别名（被当打包短选项），故不认。细节与"待实测"落定见 `spec/README.md` §12。
+- **安全取向：非法值一律不结构化**：port 非数字、addr 写成主机名、IPv4 后多余段等，curl 都报 `(49) Could not parse CURLOPT_RESOLVE entry`。所以 `parseResolveEntry` 判 `null` 时把原 token 原样留在 `rawArgs`——宁可"这条没结构化、但粘回终端照样按原样跑"，也不要"结构化出一条我们替用户臆造、结果 curl 报 49 的命令"。校验 IP 只信 `parseResolveEntry` 这一个判据，`normalizeOptions` 不另写第二套 validator。
+- **往返三义务都过**：canonical 逐字符相等（`fixtures/resolve.json` 6 条）、`parse(generate(parse(curl)))` 幂等、生成命令用真 curl 对拍（`roundtrip.live`）。
+- **读旧写新迁移**：`normalizeSpec` 扫描 `rawArgs`，把 `--resolve x:y:z` 剥引号→验证→合法就提成 `options.resolve`、非法原样留。所以旧集合文件 / 旧粘贴命令里的裸 `--resolve` 一打开就升级成新字段，不会"丢了那条 resolve"。字段是新增可选（缺失补 `[]`），`CURLSPEC_VERSION` 仍为 1，没触发整份 v2 迁移。
+- **UI 复用刚建好的草稿行**：选项 tab 末尾加一张三列表（host / 端口 / 解析到的 IP），判据抽成纯函数 `web/src/lib/resolve-rows.ts`（`needsDraftResolveRow` / `applyResolveEdit`），和 Query/Headers/表单/multipart 同一行为——末行永远有一格能直接打字。`--resolve` 每条都输出、没有 enabled 位，所以只留删除不留勾选；端口 0 在框里显示空而不是画个 0。
+- **登记一条已知限制**：IPv6 内嵌 IPv4 形式（`::ffff:1.2.3.4`）会被判非 IP → 落 `rawArgs`（不结构化）。将来运维真用到再补。
+- 本轮实测：typecheck 0 错（core + web 两包）；core **388 passed + 1 skip**（350 → 388，新增 `resolve.test.ts` 20 + `contract.test.ts` 随 `resolve.json` 扩到 234，绊线 用例 79→85 / 文件 6→7）；web **345 passed**（334 → 345，新增 `resolve-rows.test.ts` 7 + `Editors.test.tsx` 指定解析 4）；`vite build` 127 模块、产物 277.40 kB（gzip 91.64）、CSS 16.16 kB（gzip 4.01）未变；`roundtrip.live` 真 curl 对拍 1 passed。
 
 ## M1 在浏览器里做不到的事（不是 bug，是 fetch 的语义边界）
 
