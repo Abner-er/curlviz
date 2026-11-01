@@ -409,10 +409,26 @@ button.mini {
   margin-bottom: 0.6rem;
 }
 
+/*
+  选项页的字段排布：标题在左、输入框在右，同一行。
+  每个字段 DOM 里还是 <div> 包 label+input，但给 div 上 display:contents —— 拆掉那层盒子，
+  让 label 与 input 直接成为 .opt-grid 的两列项。于是列宽由整组共享（标题列按最宽的对齐，
+  输入框不会一行一个宽度参差不齐），比"每格各自两列"干净。
+*/
 .opt-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
-  gap: 0.5rem 0.9rem;
+  grid-template-columns: max-content 1fr;
+  gap: 0.4rem 0.7rem;
+  align-items: center;
+}
+
+.opt-grid > div {
+  display: contents;
+}
+
+.opt-grid input {
+  width: 100%;
+  min-width: 0;
 }
 
 .opt-sec .muted {
