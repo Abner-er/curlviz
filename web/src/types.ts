@@ -44,6 +44,12 @@ export type FailureKind =
    * 而这里是"这个页面本身不对劲"，用户下一步该刷新页面而不是去查 CORS 头。
    */
   | 'tool-error'
+  /** agent 路径：SSRF / allowlist / 缺 token / Origin 不符，被执行机拒绝。 */
+  | 'agent-rejected'
+  /** agent 路径：agent 自身 500 / 返回体不合契约 / curl 起不来。 */
+  | 'agent-error'
+  /** agent 路径：连不上执行机 agent（DNS、TCP、TLS、反代）。 */
+  | 'unreachable'
 
 export interface SendFailure {
   kind: FailureKind
@@ -70,6 +76,20 @@ export interface SendReport {
   curl: string
   sentAt: number
 }
+
+/** 一台执行机（ECS 上的 agent）。token 只存会话内存（决策②），不进 localStorage。 */
+export interface AgentExecutor {
+  id: string
+  name: string
+  /** agent 根地址，如 https://ecs-1.internal；发送时拼 /exec。 */
+  baseUrl: string
+  token: string
+}
+
+/** 发送走浏览器 fetch，还是某台执行机上的真 curl（M4 远程执行）。 */
+export type TransportSelector =
+  | { kind: 'browser' }
+  | { kind: 'agent'; executor: AgentExecutor }
 
 export interface Settings {
   quoteStyle: QuoteStyle

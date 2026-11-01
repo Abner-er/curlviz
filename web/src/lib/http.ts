@@ -7,7 +7,8 @@ import {
   type GenerateOptions,
   type VarMap
 } from '@curlviz/core'
-import type { Param2, SendReport, SentResponse } from '../types'
+import type { Param2, SendReport, SentResponse, TransportSelector } from '../types'
+import { sendViaAgent } from './agent-transport'
 import { assessCors, corsFailureHint, corsPreSendNotice, FORBIDDEN_REQUEST_HEADERS } from './fetch-rules'
 import { classifyBody, decodeBody, MAX_PREVIEW_BYTES, truncateBytes } from './response'
 
@@ -39,6 +40,8 @@ export interface SendDeps {
   now?: () => number
   timeoutMs?: number
   signal?: AbortSignal
+  /** 浏览器 fetch（默认）还是某台执行机上的真 curl（M4 远程执行）。 */
+  transport?: TransportSelector
 }
 
 /** 由 spec 造出 fetch 的入参，纯函数，可单测。 */
@@ -278,6 +281,16 @@ export async function sendSpec(
 
   const built = buildRequest(resolved.spec, vars, pageBase)
   const curl = generateCurl(spec, deps.generate)
+
+  // 交给某台执行机上的真 curl（M4 远程执行）：POST /exec、拿回同形 SendReport，响应视图不改。
+  if (deps.transport && deps.transport.kind === 'agent') {
+    return sendViaAgent(resolved, deps.transport.executor, curl, {
+      fetchImpl,
+      now,
+      signal: deps.signal,
+      timeoutMs: deps.timeoutMs
+    })
+  }
 
   const controller = new AbortController()
   const timers: ReturnType<typeof setTimeout>[] = []
