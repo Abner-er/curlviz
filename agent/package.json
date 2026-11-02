@@ -1,0 +1,20 @@
+{
+  "name": "@curlviz/agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CurlViz 远程执行 agent（M4c）：跑在用户自己的 ECS 上，收 /exec 用真 curl 执行一条 spec，凭据走 stdin，不落盘请求/响应体。",
+  "scripts": {
+    "start": "vite-node src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@curlviz/core": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

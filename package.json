@@ -6,7 +6,8 @@
   "license": "MIT",
   "workspaces": [
     "packages/*",
-    "web"
+    "web",
+    "agent"
   ],
   "engines": {
     "node": ">=20.19"
