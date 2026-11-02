@@ -458,9 +458,9 @@ web **334 passed**（25 → 27 文件，316 → 334，新增 18 条：`lib/kv-ro
 `components/KeyValueTable.test.tsx` 4 → 8、`components/Editors.test.tsx` 4）；
 `vite build` 126 模块，`index-*.js` 274.18 kB / gzip 90.59，CSS 16.16 kB / gzip 4.01 未变。
 
-## 17. 远程执行 + 指定解析（M4：M4a 已实现 · M4b–d 设计稿，2026-11-01）
+## 17. 远程执行 + 指定解析（M4：M4a–c 已实现 · M4d 待真机联调，2026-11-01）
 
-> **状态：M4a 已落地，M4b–d 仍是开工前的设计稿。** M4a（数据模型层：`--resolve` 结构化进 `options.resolve`，parse/generate round-trip + fixture + 单测 + UI「指定解析」面板）代码已写完，契约全绿、`roundtrip.live` 对拍通过、表单可编辑；契约正文口径见 `spec/README.md` §12。下面的 §17.1–§17.4 里"传输通道 / 执行机注册表 / agent 服务"这三层（M4b–d）尚未动码，保留为"开工前把边界、安全、契约钉死"的方案，落地时再把对应小节改成正文口径。
+> **状态：M4a、M4b、M4c 已落地；M4d（真机联调）待用户提供 ECS `baseUrl` + `token`。** M4a（`--resolve` 结构化进 `options.resolve`，parse/generate round-trip + fixture + 单测 + UI「指定解析」面板）契约见 `spec/README.md` §12。M4b（transport 抽象 + `buildArgv` + 执行机注册表 + 发送旁下拉，token 只存会话内存=决策②）见 `spec/README.md` §13。M4c（`agent/` Node 服务：`/exec` 用 `spawn('curl', argv, {shell:false})` 真跑、token/Origin 鉴权、SSRF allowlist 扫最终 argv 含 `--resolve`/`--connect-to`/proxy IP、限流/超时/体积上限、脱敏审计；拒绝与注入路径本机测过）契约正文见 `spec/README.md` §13，部署说明见 `agent/README.md`。**注意诚实边界**：`runCurl` 成功跑一条 curl 依赖 Linux 的 `fd://` + 末尾 `-m`，本机（Windows）不发真请求（遵守"不发废请求"），这条成功路径要到 **M4d 在用户 ECS（Linux）上验**。下面 §17.1–§17.4 的"传输通道 / 执行机注册表 / agent 服务"三层已改为正文口径。
 
 **需求（用户原话）**："要加一个修改使用指定解析的功能，而且我还想把它部署在线上，但是可以使用指定公网的 ECS 机器来执行 curl 操作。" 经三个岔路口确认，选定的是**最重的组合**：`--resolve` 钉 IP + 一个前端选多台 ECS + 团队共用。
 
@@ -473,9 +473,9 @@ web **334 passed**（25 → 27 文件，316 → 334，新增 18 条：`lib/kv-ro
 | 层 | 位置 | 现状（已核对代码） | 要做 |
 |---|---|---|---|
 | 数据模型 | `packages/core-ts` + `spec/` | **已实现（M4a）**：`options.resolve: {host;port;addr}[]`，parse/generate round-trip，非法值留 `rawArgs`，读旧写新迁移 | 已完成：`fixtures/resolve.json`（6 条）+ 契约绊线 + 单测 + UI「指定解析」面板；正文口径见 `spec/README.md` §12 |
-| 传输通道 | `web/src/lib/http.ts:sendSpec` | 写死 `fetchImpl`（**可注入，好改**） | 抽象 `transport: 'browser' \| {kind:'agent'; id}`；agent 路径把 spec POST 出去、拿回**同形 `SendReport`**，响应视图一行不改 |
-| 执行机注册表 | `web`（localStorage） | 无 | 多台 ECS `{id,name,baseUrl,token}` + 发送旁下拉；token 存储策略见 §17.3 |
-| agent 服务 | `agent/`（新目录，Node 单文件） | 无 | `/exec`：argv 调系统 curl、鉴权、SSRF allowlist、限流/超时/体积上限、审计（见 §17.2） |
+| 传输通道 | `web/src/lib/http.ts:sendSpec` | **已实现（M4b）**：`transport: 'browser' \| {kind:'agent'; executor}` 可注入分派；agent 路径 POST `/exec`、拿回**同形 `SendReport`**，响应视图一行不改；rawArgs 在 agent 路径照常执行并在 notes 里如实说明 | 已完成：`transport.ts` 抽象 + `agent-transport.ts` 纯映射（mock 单测，不发真请求）；契约见 `spec/README.md` §13 |
+| 执行机注册表 | `web`（localStorage + 会话内存） | **已实现（M4b）**：`{id,name,baseUrl}` 落 localStorage、**token 只存会话内存**（决策②，类型上就无 token 字段、刷新即失效）；发送旁「浏览器 / 某执行机」下拉 + 管理弹窗 | 已完成：`executors.ts` 纯函数 + `useExecutors` + `TransportPicker`/`ExecutorManager`；未填 token 时选择器 warn 并明说会被拒 |
+| agent 服务 | `agent/`（新 workspace，Node + vite-node） | **已实现（M4c）**：`/exec` 用 `spawn('curl', argv, {shell:false})` 真跑、`buildArgv` 生成 argv + 凭据走 `--config -` stdin、token(常量时间)/Origin 鉴权、SSRF allowlist 扫**最终 argv**（含 `--resolve`/`--connect-to`/proxy/doh IP + 硬禁元数据段）、限流/并发/请求体/响应体上限/`-m` 超时、脱敏审计（不落 body/path-query）；拒绝+注入路径本机 HTTP 测过 | 见 `spec/README.md` §13 + `agent/README.md`。诚实边界：`runCurl` 成功跑依赖 Linux `fd://`，留 M4d 真机验 |
 
 ### 17.2 安全红线（team + 公网 = 最高危，不是可选项）
 
@@ -488,9 +488,11 @@ web **334 passed**（25 → 27 文件，316 → 334，新增 18 条：`lib/kv-ro
 - 限并发 / 限流 / 请求体上限 / 响应体上限 / 强制 `-m` 超时；审计记"谁/何时/目标/exit"，**脱敏、不落响应体**。
 - 部署：agent 挡在 nginx + 真 TLS 后面。**同源部署**（前端与 agent 同域）还能顺带免掉 CORS 与 https→http 混合内容两类坑。
 
-### 17.3 一个未定子决策（开工 M4b 前必须拍板）
+### 17.3 token 存储决策（已拍板：②）
 
-token 存哪：① localStorage 明文（最省事，但共用机器上别人能翻走）；② 只存会话内存、每次开页重填；③ 前端根本不持密钥，agent 挡在 OIDC / mTLS 反代后。**团队共用场景倾向 ②或③**，①只在"其实就我一个人用"时勉强可接受。
+token 存哪的三个候选：① localStorage 明文（最省事，但共用机器上别人能翻走）；② 只存会话内存、每次开页重填；③ 前端根本不持密钥，agent 挡在 OIDC / mTLS 反代后。团队共用场景倾向 ②或③，①只在"其实就我一个人用"时勉强可接受。
+
+**已选定 ②，M4b-4a 落地**：`{id,name,baseUrl}` 落 localStorage，**token 只存 React 会话内存**，刷新即失效——`StoredExecutor` 类型上根本没有 token 字段，从类型层面消除误持久化。未填 token 时选择器会 warn 并明说这次会被 agent 拒。③（OIDC/mTLS 反代）作为未来可叠加的加固，不阻塞当前。
 
 ### 17.4 契约影响（这是 v2 级改动，先改 spec 再动码）
 
@@ -503,11 +505,11 @@ token 存哪：① localStorage 明文（最省事，但共用机器上别人能
 | 期 | 内容 | 风险 | 可测判据 |
 |---|---|---|---|
 | **M4a ✅** | `--resolve` 进 core：parse/generate round-trip + fixture + spec/README + 单测 + UI「指定解析」面板（复用末行草稿行组件） | 低（纯本地） | **已完成**：契约全绿（`contract.test.ts` 234 例含 `resolve.json` 6 条），core 390 passed + 1 skip，`resolve.test.ts` 21 例，web 349 passed（含 `resolve-rows.test.ts` 11 例含 `urlAuthority` + `Editors.test.tsx` 指定解析 4），`vite build` 127 模块、`index-*.js` 277.91 kB / gzip 91.86；`roundtrip.live` 真 curl 对拍 `--resolve` 通过。**同日两处返修**：UI 面板改成两列（域名 + IP，端口从 URL 打底，运维只敲 IP）+ 选项页分组重排；白屏修复（`useWorkbench` 初始化/load 都过 `normalizeSpec`，M4a 前存的旧草稿缺 `options.resolve` 不再崩首屏，core 补回归用例） |
-| **M4b** | transport 抽象 + agent 注册表 + 执行机下拉（先用 mock agent 测，不发真请求） | 中 | 单测覆盖 transport 分派；UI 能选机器 |
-| **M4c** | agent 服务端：argv 调 curl + token + SSRF allowlist（含 `--resolve` IP 校验）+ 限流/超时/体积 + 审计 | 高（安全） | 元数据段/未放行内网的**拒绝**测试；注入测试 |
-| **M4d** | 真机联调 + round-trip 对拍 + 文档回填 | — | 一台真 ECS 用 `--resolve` 打通内网目标 |
+| **M4b ✅** | transport 抽象 + `buildArgv` + agent 注册表 + 执行机下拉（先用 mock agent 测，不发真请求） | 中 | **已完成**（提交 `72583b1`→`56f4bc2`）：core `buildArgv`（argv + 凭据走 `--config -` stdin）单测绿，core 回归 402 passed / 1 skipped / 9 files；web `transport.ts` 抽象 + `agent-transport.ts` 纯映射（`toSentResponse`/`buildSendReport`/`readWire`）+ `executors.ts` 注册表（**token 只存会话内存=决策②**）+ `TransportPicker`/`ExecutorManager` UI 全部 mock 测、不发真请求；web 全量 **389 passed / 33 files**；`vite build` `index-*.js` 289.99 kB / gzip 95.54。契约见 `spec/README.md` §13。 |
+| **M4c ✅** | agent 服务端：argv 调 curl + token + SSRF allowlist（含 `--resolve` IP 校验）+ 限流/超时/体积 + 审计 | 高（安全） | **已完成**（提交 `a60d859`→`05e34f0`）：`agent/` 新 workspace；`ip.ts` 位运算（v4/v6/CIDR/v4-mapped）、`ssrf.ts`（allowlist 默认拒绝 + 扫**最终 argv** 抽 `--resolve`/`--connect-to`/proxy/doh IP + 硬禁 `169.254/16`·`100.100.100.200`·`0/8`·`fe80::/10`·`fc00::/7` + v1 拒 `-L`）、`curl-runner.ts`（`spawn('curl', argv, {shell:false})` + `--dump-header fd://3` + 末尾 `-m` + 凭据 stdin 不进 `ps`）、`wire/config/gate/limits/server` 分层；**元数据段与未放行内网的拒绝测试、`shell:false` 注入面测试**均绿。agent `tsc --noEmit` 0 错误，agent vitest **91 passed / 8 files**（ip15+ssrf20+wire7+curl-runner17+config6+gate11+limits4+server11）；`server.test` 真起 `listen(0)`+fetch 只走拒绝分支、不 spawn curl、不外发请求。部署说明见 `agent/README.md`。**诚实边界**：`runCurl` 成功跑一条 curl 依赖 Linux `fd://`，本机（Windows）不发真请求，成功路径留 M4d 真机验。 |
+| **M4d** | 真机联调 + round-trip 对拍 + 文档回填 | — | **待用户 ECS**：需要用户提供 `baseUrl` + `token`（已澄清非 ECS 登录密码）。一台真 ECS 用 `--resolve` 打通内网目标，并对拍 `runCurl` 成功路径（`fd://3` 取头 + 末尾 `-m`）。 |
 
-M4a 已按这个顺序落完：风险最低、把跨端契约钉死、解锁后续全部，并直接复用了刚建好的末行草稿行组件。**下一步是 M4b**（transport 抽象 + 执行机下拉，先 mock agent 不发真请求），但开工前必须先拍 §17.3 的 token 存储决策。
+M4a→M4b→M4c 已按这个顺序落完：风险从低到高、每层独立可测可提交、契约在实现前钉死。**下一步是 M4d**（真机联调），阻塞在用户提供的 ECS `baseUrl` + `token`；agent 侧已可 `npm start` 起服务，前端选执行机即走远程 curl。
 
 ### 17.6 明确不在本设计内
 

@@ -455,7 +455,7 @@ M2 必须先定的四条规矩（分享格式、脱敏遮盖形状、多环境�
 
 ## 13. 远程执行 wire 契约（M4b/M4c：transport 抽象 + agent /exec）
 
-> 状态：设计已定，代码实现中（本节先于代码落地，安全红线正文在 docs/PLAN.md §17.2，本节只钉字节长什么样）。
+> 状态：**M4b（transport 抽象 + `buildArgv` + web 远程执行）与 M4c（agent `/exec` 服务）已落地**——`/exec` 的 wire 形状由 web transport mock 单测（不发真请求）与 agent 拒绝/注入测试双钉。M4d（真机联调 `runCurl` 成功路径，依赖 Linux `fd://`）待用户在 ECS 上验。安全红线正文见 docs/PLAN.md §17.2，本节只钉字节长什么样。
 
 前端把一条 spec 交给用户自己的 ECS 跑真 curl，这条通道的线上格式在这里钉死：web 的 agent-transport 与 agent/ 服务端都按本节实现，Kotlin 侧将来复用同一形状。
 
@@ -524,5 +524,5 @@ agent 不拼 shell 字符串，直接 `spawn('curl', argv, {shell:false})`，注
 ### 13.4 契约边界与登记
 
 - `buildArgv` 是生成方向的新纯函数，只读 CurlSpec、不碰网络与文件系统，两端可用；Kotlin 侧可照抄同一 argv 语义。它不改变 parse⇄generate 的往返契约，`CURLSPEC_VERSION` 仍为 1。
-- `/exec` 的 wire 形状不进 §1–§12 那批 parse/generate fixture（那些钉的是 parse⇄generate 往返）；它由 web 的 transport 单测（mock agent，不发真请求）和 agent 的拒绝/注入测试（M4c）分别钉住。
+- `/exec` 的 wire 形状不进 §1–§12 那批 parse/generate fixture（那些钉的是 parse⇄generate 往返）；它由 web 的 transport 单测（mock agent，不发真请求，M4b 已落地）和 agent 的拒绝/注入测试（M4c 已落地：元数据段/未放行内网的拒绝、`shell:false` + 程序名钉死 curl 的注入面）分别钉住。
 - 分期实现进度回填到 docs/PLAN.md §17.5 的表；M4d（真机联调）需要用户提供 baseUrl 与 token。
