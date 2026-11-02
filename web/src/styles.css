@@ -1247,6 +1247,70 @@ button.chip.warn {
   cursor: pointer;
 }
 
+/*
+  发送路径选择器（M4）：一颗复用 .chip 的小按钮，左边短标签说"走哪种路"、右边粗体说"哪一台"。
+  长解释全在 title 里，芯片本身短到能塞进请求行。它比方法/URL 控件矮，所以 min-height 对齐到 2.1rem。
+*/
+.transport {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+}
+
+.transport-btn {
+  cursor: pointer;
+  min-height: 2.1rem;
+  max-width: 15rem;
+}
+
+.transport-btn .transport-tag {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--placeholder);
+}
+
+.transport-btn .transport-name {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+/* 弹出层复用 .menu，只是这颗芯片在发送左边，菜单往左对齐才不溢出。 */
+.transport .menu {
+  right: auto;
+  left: 0;
+}
+
+.transport-manage {
+  border-top: 1px solid var(--line);
+  margin-top: 0.15rem;
+}
+
+/* 执行机管理：每台一张卡，卡内字段复用 .opt-grid（标题左、输入框右）。 */
+.ex-list {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.ex-card {
+  border: 1px solid var(--line);
+  border-radius: var(--r-ctl);
+  padding: 0.5rem 0.6rem;
+  background: var(--bg-2);
+}
+
+.ex-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.45rem;
+}
+
+.ex-title {
+  font-weight: 600;
+  font-size: 0.8rem;
+}
+
 /* 二选一的分段控件（引号风格）：比下拉少一次点击，也让"当前是哪份"一眼可见 */
 .seg {
   display: inline-flex;

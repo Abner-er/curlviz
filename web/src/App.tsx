@@ -24,12 +24,15 @@ import {
 import { usePersistence } from './hooks/usePersistence'
 import { useWorkbench } from './hooks/useWorkbench'
 import { useSend } from './hooks/useSend'
+import { useExecutors } from './hooks/useExecutors'
 import { useShareImport } from './hooks/useShareImport'
 import { useSplit, useSplitOrientation } from './hooks/useSplit'
 import { CurlPreview } from './components/CurlPreview'
 import { ImportDialog } from './components/ImportDialog'
 import { Overlay } from './components/Overlay'
 import { RequestBar } from './components/RequestBar'
+import { TransportPicker, type TransportOption } from './components/TransportPicker'
+import { ExecutorManager } from './components/ExecutorManager'
 import { ResponsePanel } from './components/ResponsePanel'
 import { HistoryPanel } from './components/HistoryPanel'
 import { KeyValueTable } from './components/KeyValueTable'
@@ -90,6 +93,14 @@ export function App() {
     openRef: wb.activeRef
   })
 
+  // 执行机注册表 + 会话 token（token 只在内存，刷新即空）。transport 现算现给 useSend。
+  const exec = useExecutors(session.store, persistence)
+  const transportOptions: TransportOption[] = exec.registry.executors.map((e) => ({
+    id: e.id,
+    name: e.name,
+    hasToken: exec.tokenOf(e.id) !== ''
+  }))
+
   // 这次生效的变量表：激活环境优先，其它环境兜底（语义来自 core 的 toVarMap）
   const vars = useMemo(() => varsFor(envState), [envState])
 
@@ -105,6 +116,7 @@ export function App() {
     spec: wb.spec,
     vars,
     settings,
+    transport: exec.transport,
     setReport: wb.setReport,
     persistence,
     initialHistory
@@ -121,6 +133,8 @@ export function App() {
 
   const [tab, setTab] = useState<Tab>('query')
   const [importOpen, setImportOpen] = useState(false)
+  /** 执行机管理弹窗。 */
+  const [managerOpen, setManagerOpen] = useState(false)
   /**
    * 资料库抽屉，默认关着 —— 这个工具的主动作是"改命令、发出去、看结果"，
    * 那一整页都该留给工作台。
@@ -368,6 +382,14 @@ export function App() {
               preflightExpected={facts.preflightExpected}
               preflightReason={facts.reason}
               menu={sendMenu}
+              picker={
+                <TransportPicker
+                  activeId={exec.registry.activeId}
+                  options={transportOptions}
+                  onSelect={exec.select}
+                  onManage={() => setManagerOpen(true)}
+                />
+              }
               boundNote={boundEntry ? `编辑自「${boundEntry.collection}」的 ${boundEntry.request}` : null}
               onName={(name) => wb.patch({ name })}
               onMethod={(method) => wb.patch({ method })}
@@ -504,6 +526,19 @@ export function App() {
       )}
 
       {importOpen && <ImportDialog onImport={onImport} onClose={() => setImportOpen(false)} />}
+
+      {managerOpen && (
+        <Overlay label="执行机" onClose={() => setManagerOpen(false)} initialFocus="field">
+          <ExecutorManager
+            registry={exec.registry}
+            tokenOf={exec.tokenOf}
+            onAdd={exec.add}
+            onUpdate={exec.update}
+            onRemove={exec.remove}
+            onSetToken={exec.setToken}
+          />
+        </Overlay>
+      )}
 
       {/* 分享永远默认脱敏：历史留在本机，而分享是要把东西送出这台机器的 */}
       {share && (

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { KNOWN_METHODS } from '@curlviz/core'
 import type { SendActionId, SendMenu } from '../lib/send-actions'
 import { sendBadge } from '../lib/send-actions'
@@ -15,6 +16,8 @@ interface Props {
   /** 徽标悬停时说的完整一句。 */
   preflightReason: string
   menu: SendMenu
+  /** 发送路径选择器（浏览器 / 某台执行机）；由 App 组好后传进来，画在发送按钮左边。 */
+  picker?: ReactNode
   /** "编辑自「某集合」的 某条请求"，没有就是 null。 */
   boundNote: string | null
   onName: (value: string) => void
@@ -113,6 +116,9 @@ export function RequestBar(props: Props) {
           onChange={(e) => props.onUrl(e.target.value)}
           onBlur={() => props.onUrl(ensureScheme(url))}
         />
+
+        {/* 发送路径选择器挨着发送按钮：跨域被拦时要换条路再发，入口就得在手边。 */}
+        {props.picker}
 
         {/*
           URL 没填用 aria-disabled 而非原生 disabled：原生 disabled 吃掉指针事件，

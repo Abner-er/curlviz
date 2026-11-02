@@ -25,7 +25,12 @@ export const KEYS = {
   /** 命名环境与当前激活项（EnvState）。 */
   environments: 'environments',
   /** 编辑器里这条 spec 是从哪个集合的哪条请求打开的（支持"改完就地更新"）。 */
-  openRef: 'openRef'
+  openRef: 'openRef',
+  /**
+   * 执行机注册表（ExecutorRegistry）：只存 {id,name,baseUrl} 三样。
+   * token 绝不进这个键——它只活在会话内存里（见 lib/executors 决策②）。
+   */
+  executors: 'executors'
 } as const
 
 export type StoreKey = (typeof KEYS)[keyof typeof KEYS]

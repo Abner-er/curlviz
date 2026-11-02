@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { generateCurl, type CurlSpec } from '@curlviz/core'
-import type { HistoryEntry, SendReport, Settings } from '../types'
+import type { HistoryEntry, SendReport, Settings, TransportSelector } from '../types'
 import { sendSpec, toolFailureReport } from '../lib/http'
 import { appendHistory, makeHistoryEntry, resultFromOutcome } from '../lib/history'
 import { newId } from '../lib/collections'
@@ -21,6 +21,11 @@ export interface SendInput {
   spec: CurlSpec
   vars: Record<string, string>
   settings: Settings
+  /**
+   * 发送走哪条路：省略或 kind:'browser' = 浏览器 fetch；kind:'agent' = 某台执行机上的真 curl（M4）。
+   * 由调用方（App 的注册表 + 会话 token）现算现给，这里不决定选哪台。
+   */
+  transport?: TransportSelector
   /** 结果放在工作台（workbench.report），因为"换一条请求要撤掉上一次的结果"是工作台的事。 */
   setReport: (r: SendReport | null) => void
   /** 存储写入统一走持久化层，失败提示才有同一句话。 */
@@ -42,7 +47,7 @@ export interface Sender {
 const HISTORY_CONSEQUENCE = '只保留在这次会话里。'
 
 export function useSend(input: SendInput): Sender {
-  const { spec, vars, settings, setReport, persistence, initialHistory } = input
+  const { spec, vars, settings, transport, setReport, persistence, initialHistory } = input
   const [sending, setSending] = useState(false)
   const [history, setHistory] = useState<HistoryEntry[]>(initialHistory)
   const abortRef = useRef<AbortController | null>(null)
@@ -62,6 +67,7 @@ export function useSend(input: SendInput): Sender {
       r = await sendSpec(spec, {
         vars,
         generate: { quoteStyle: settings.quoteStyle, multiline: settings.multiline },
+        transport,
         signal: controller.signal
       })
     } catch (e) {
@@ -88,7 +94,7 @@ export function useSend(input: SendInput): Sender {
     const next = appendHistory(history, entry)
     setHistory(next)
     persistence.write(KEYS.history, next, '历史', HISTORY_CONSEQUENCE)
-  }, [spec, vars, settings, setReport, persistence, history])
+  }, [spec, vars, settings, transport, setReport, persistence, history])
 
   const cancel = useCallback(() => {
     abortRef.current?.abort()
