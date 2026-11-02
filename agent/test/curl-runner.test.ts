@@ -207,3 +207,51 @@ describe('runCurl（假 spawn）', () => {
     if (!r.ok) expect(r.failure.message).toContain('curl 起不来')
   })
 })
+
+describe('runCurl 注入面（shell:false + 程序名钉死 curl）', () => {
+  it('spawn 收到 ("curl", argv[], {shell:false})，值里带 shell 元字符也只喂 curl、不进任何 shell', async () => {
+    const f = fakeChild()
+    let cmd = ''
+    let args: string[] = []
+    let opts: Record<string, unknown> = {}
+    const spawnFn = ((c: string, a: string[], o: Record<string, unknown>) => {
+      cmd = c
+      args = a
+      opts = o
+      return f.child
+    }) as unknown as typeof import('node:child_process').spawn
+
+    const s = createDefaultSpec('t')
+    s.url = 'https://internal.api/v1'
+    s.options.followRedirects = false
+    // 合法 rawArgs：每个元素是一个 bash token（§10.1 #1）。即便值里含 shell 元字符，
+    // spawn('curl', argv, {shell:false}) 也只把它们当 curl 的参数（curl 数据，非 shell 命令），
+    // 不存在把 ;/|/& 交给 shell 执行的路径——这就是注入面被"构造"消除的根据。
+    s.rawArgs = ['--output', '/tmp/out.bin']
+
+    const p = runCurl(s, { maxTimeMs: 30_000, maxPreviewBytes: 1024 }, { spawnFn, now: () => 1 })
+    f.headers.write('HTTP/1.1 200 OK\r\n\r\n')
+    f.headers.end()
+    f.stdout.end()
+    f.stderr.end()
+    await Promise.all([onceEnd(f.headers), onceEnd(f.stdout), onceEnd(f.stderr)])
+    f.child.emit('close', 0)
+    await p
+
+    // 核心安全性质：程序名钉死是 curl、参数是数组、没有 shell 解释器
+    expect(cmd).toBe('curl')
+    expect(Array.isArray(args)).toBe(true)
+    expect(opts.shell).toBe(false)
+    // 绝不会被重写成 shell 调用（没有 sh/bash/-c 这类"再起一个解释器"的形态）
+    expect(args).not.toContain('sh')
+    expect(args).not.toContain('bash')
+    expect(args).not.toContain('-c')
+    // 合法 rawArgs 原样进 argv（逐 token 保真）
+    expect(args).toContain('--output')
+    expect(args).toContain('/tmp/out.bin')
+    // runner 追加的三路分离与封顶确实在 argv 里
+    expect(args).toContain('--dump-header')
+    expect(args).toContain('fd://3')
+    expect(args).toContain('-m')
+  })
+})
