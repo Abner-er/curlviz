@@ -6,17 +6,24 @@ import { failure, type FailureResponse, type WireAgentResponse, type WireRespons
 
 /**
  * 执行层：拿一条 spec，用 core 的 buildArgv 生成 argv，`spawn('curl', argv, { shell:false })` 真跑，
- * 把 curl 的三路输出归一成 WireAgentResponse（对齐 spec §13.3）。
+ * 把 curl 的输出归一成 WireAgentResponse（对齐 spec §13.3）。
  *
- * 三路怎么分（Linux / ECS 部署，curl 支持 fd://）：
- *   - 响应体 → stdout（fd1，curl 默认，不传 -o）
- *   - 响应头 → fd3（`--dump-header fd://3`，spawn 的第 4 根 stdio 管道）
- *   - 错误   → stderr（fd2，配 -sS 让 stderr 只剩真错误、无进度条噪声）
+ * 响应头/体怎么分（实测驱动，2026-11-03 真机）：
+ *   用 curl 的 `-i/--include`——它把响应头**前置到同一条 stdout** 上，头块以空行
+ *   （`\r\n\r\n`，容错 `\n\n`）与体分隔。我们在内存里按首个空行切开：前半是状态行+响应头，
+ *   后半是响应体。错误仍走 stderr（配 `-sS`，stderr 只剩真错误、无进度条噪声）。
+ *
+ *   旧版曾用 `--dump-header fd://3` 想把头单独引到第 4 根 stdio 管道。**真机证伪**：
+ *   curl 8.14.1（Termux/Alpine）对 `--dump-header` 的入参按**字面文件名**处理，`fd://3`
+ *   不是它认的取数协议，于是 `fopen("fd://3")` 失败、curl 以退出码 23（Failed writing
+ *   received data）当场终止。`-i` 不碰 fd、不写盘，Linux 与 Windows 的 curl 行为一致，
+ *   是更稳的分离法。凭据仍走 `--config -` 的 stdin，不进 ps。
+ *
  * 绝不把请求体/响应体写进磁盘（红线）——body 只在内存里流式取，超上限即截断。
  *
- * 好测的拆法：把「怎么从 curl 输出拼出响应」这层纯逻辑（parseResponseBlocks /
- * parseStatusAndHeaders / classifyExit / assembleResponse）单独拿出来，用假数据直接钉；
- * runCurl 只是"起进程 + 喂 stdin + 收三路字节 + 调纯函数"的薄接线，真机联调留给 M4d。
+ * 好测的拆法：把「怎么从 curl 输出拼出响应」的纯逻辑（splitHeadBody /
+ * parseStatusAndHeaders / classifyExit / assembleResponse）单独拿出来用假数据钉；
+ * runCurl 只是"起进程 + 喂 stdin + 收 stdout/stderr 字节 + 调纯函数"的薄接线。
  */
 
 /* ------------------------------------------------------------------ */
@@ -69,6 +76,31 @@ export function parseStatusAndHeaders(dump: string): {
 export function contentTypeFrom(headers: [string, string][]): string {
   for (const [k, v] of headers) if (k.toLowerCase() === 'content-type') return v
   return ''
+}
+
+/**
+ * 在 curl `-i` 的头+体合并流里找响应头块的结束位置（按字节，二进制安全）。
+ * 优先 `\r\n\r\n`（体从 idx+4 起），容错 `\n\n`（体从 idx+2 起）。
+ * 找不到分隔 → hasBoundary=false、headerEnd=buf.length（整段当头处理，体为空）。
+ */
+export function splitHeadBody(buf: Uint8Array): { headerEnd: number; hasBoundary: boolean } {
+  const crlfCrlf = indexOfSeq(buf, [0x0d, 0x0a, 0x0d, 0x0a])
+  if (crlfCrlf >= 0) return { headerEnd: crlfCrlf + 4, hasBoundary: true }
+  const lfLf = indexOfSeq(buf, [0x0a, 0x0a])
+  if (lfLf >= 0) return { headerEnd: lfLf + 2, hasBoundary: true }
+  return { headerEnd: buf.length, hasBoundary: false }
+}
+
+/** 在字节数组里找子序列首次出现的位置；找不到返回 -1。 */
+function indexOfSeq(buf: Uint8Array, seq: number[]): number {
+  if (seq.length === 0 || buf.length < seq.length) return -1
+  outer: for (let i = 0; i + seq.length <= buf.length; i++) {
+    for (let j = 0; j < seq.length; j++) {
+      if (buf[i + j] !== seq[j]) continue outer
+    }
+    return i
+  }
+  return -1
 }
 
 export interface AssembleInput {
@@ -134,7 +166,7 @@ export function classifyExit(code: number, stderrText: string): { ok: true } | F
 }
 
 /* ------------------------------------------------------------------ */
-/* 薄接线：起 curl、喂 stdin、收三路字节                                */
+/* 薄接线：起 curl、喂 stdin、收 stdout(-i 头+体)/stderr 字节            */
 /* ------------------------------------------------------------------ */
 
 export interface RunConfig {
@@ -194,9 +226,101 @@ function toArr(buf: Uint8Array | string): Uint8Array {
   return typeof buf === 'string' ? new TextEncoder().encode(buf) : new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength)
 }
 
+const HEAD_CAP = 256 * 1024
+
+/**
+ * curl `-i` 合并流的内存累加器（状态机）。因为头块恒排在体之前：找到空行边界前**全存**
+ * （头永不被截），边界之后才按 maxPreviewBytes 截体。用 HEAD_CAP 给"找边界"这一步兜底内存，
+ * 超了还没边界就判定畸形、停止存储、truncated=true、把已存的整段当头。
+ */
+function createIncludeAccumulator(maxPreviewBytes: number, now: () => number) {
+  const headBuf: number[] = []
+  const bodyChunks: Uint8Array[] = []
+  let bodyKept = 0
+  let total = 0
+  let headerEnd: number | null = null // 全局字节偏移：体从这里开始
+  let firstByteAt: number | null = null
+  let bodyDropped = false
+  let headOverflow = false
+
+  function feedBody(buf: Uint8Array): void {
+    const room = maxPreviewBytes - bodyKept
+    if (room <= 0) {
+      if (buf.byteLength > 0) bodyDropped = true
+      return
+    }
+    if (buf.byteLength > room) {
+      bodyChunks.push(buf.subarray(0, room))
+      bodyKept += room
+      bodyDropped = true
+    } else {
+      bodyChunks.push(buf)
+      bodyKept += buf.byteLength
+    }
+  }
+
+  function push(buf: Uint8Array): void {
+    if (buf.byteLength === 0) return
+    if (firstByteAt === null) firstByteAt = now()
+    total += buf.byteLength
+    if (headerEnd !== null) {
+      // 已过边界，纯体区
+      feedBody(buf)
+      return
+    }
+    // 仍在找边界
+    if (headOverflow) return // 头都溢出了，不再存
+    for (let i = 0; i < buf.byteLength; i++) headBuf.push(buf[i] as number)
+    if (headBuf.length > HEAD_CAP) {
+      headOverflow = true
+      headerEnd = headBuf.length // 把已存整段当头，体为空
+      return
+    }
+    const head = Uint8Array.from(headBuf)
+    const { headerEnd: rel, hasBoundary } = splitHeadBody(head)
+    if (hasBoundary) {
+      headerEnd = rel
+      const tail = head.subarray(rel) // 本段里已越过头块的体字节
+      // 体从 tail 起：把 head 截断到头块，tail 交给体逻辑
+      headBuf.length = rel
+      feedBody(tail)
+    }
+  }
+
+  function finalize(): {
+    headerBytes: Uint8Array
+    bodyBytes: Uint8Array
+    totalBody: number
+    truncated: boolean
+    firstByteAt: number | null
+    noBoundary: boolean
+  } {
+    const headerBytes = Uint8Array.from(headBuf)
+    const body = new Uint8Array(bodyKept)
+    let off = 0
+    for (const c of bodyChunks) {
+      body.set(c, off)
+      off += c.byteLength
+    }
+    const bodyStart = headerEnd ?? headerBytes.length
+    const totalBody = Math.max(0, total - bodyStart)
+    return {
+      headerBytes,
+      bodyBytes: body,
+      totalBody,
+      truncated: bodyDropped || headOverflow,
+      firstByteAt,
+      noBoundary: headerEnd === null
+    }
+  }
+
+  return { push, finalize }
+}
+
 /**
  * 跑一条 spec 返回归一响应。不抛错——所有失败都包成 { ok:false, failure }（wire 契约）。
- * 注意：fd:// 与 -m 追加依赖 Linux curl；本机不发真请求，真跑在 M4d 的用户 ECS 上验。
+ * 用 curl `-i` 把头/体收在同一条 stdout，按首个空行内存切分；不碰 fd、不写盘，
+ * Linux 与 Windows 的 curl 都成立（真机在 Termux/Alpine curl 8.14.1 上验过成功路径）。
  */
 export function runCurl(spec: CurlSpec, cfg: RunConfig, deps: RunDeps = {}): Promise<WireResponse> {
   const spawnFn = deps.spawnFn ?? spawn
@@ -205,12 +329,13 @@ export function runCurl(spec: CurlSpec, cfg: RunConfig, deps: RunDeps = {}): Pro
   return new Promise<WireResponse>((resolve) => {
     const built = buildArgv(spec)
     // -m 追加在末尾，curl 对重复单值选项"最后一个生效"，确保封顶不被 spec 里的长值绕过。
+    // -i：响应头前置到 stdout，与体同一道流（替代已证伪的 --dump-header fd://3）。
     const capSeconds = Math.max(1, Math.ceil(cfg.maxTimeMs / 1000))
-    const argv = [...built.argv, '-sS', '--dump-header', 'fd://3', '-m', String(capSeconds)]
+    const argv = [...built.argv, '-sS', '-i', '-m', String(capSeconds)]
 
     const startedAt = now()
-    const body = newSink()
-    const header = newSink()
+    // -i 合并流：头恒排在体前，累加器找到空行边界前全存（头不截），边界后才按 maxPreviewBytes 截体。
+    const accum = createIncludeAccumulator(cfg.maxPreviewBytes, now)
     const errSink = newSink()
     let settled = false
 
@@ -222,7 +347,7 @@ export function runCurl(spec: CurlSpec, cfg: RunConfig, deps: RunDeps = {}): Pro
 
     const child: ChildProcess = spawnFn('curl', argv, {
       shell: false,
-      stdio: ['pipe', 'pipe', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe']
     })
 
     // 凭据走 --config - 的 stdin，不进 ps；没有凭据就直接关掉 stdin。
@@ -232,12 +357,8 @@ export function runCurl(spec: CurlSpec, cfg: RunConfig, deps: RunDeps = {}): Pro
       /* stdin 已被 curl 关闭，忽略 */
     }
 
-    child.stdout?.on('data', (b: Uint8Array | string) => feed(body, toArr(b), now, cfg.maxPreviewBytes))
+    child.stdout?.on('data', (b: Uint8Array | string) => accum.push(toArr(b)))
     child.stderr?.on('data', (b: Uint8Array | string) => feed(errSink, toArr(b), now, 16 * 1024))
-    const h3 = child.stdio?.[3]
-    if (h3 && 'on' in h3) {
-      (h3 as NodeJS.ReadableStream).on('data', (b: Uint8Array | string) => feed(header, toArr(b), now, 256 * 1024))
-    }
 
     // 墙钟兜底：比 -m 稍宽的 grace 内没退出就 kill，防 curl 卡死。
     const timer = setTimeout(() => {
@@ -265,8 +386,9 @@ export function runCurl(spec: CurlSpec, cfg: RunConfig, deps: RunDeps = {}): Pro
         finish(cls)
         return
       }
-      // 退出码 0 但没状态行（如 --head 之外的怪异），如实报 agent-error 而非编 200。
-      const parsed = parseStatusAndHeaders(utf8(header))
+      // 退出码 0：用累加器切好的头/体。没状态行如实报 agent-error 而非编 200。
+      const { headerBytes, bodyBytes, totalBody, truncated, firstByteAt } = accum.finalize()
+      const parsed = parseStatusAndHeaders(new TextDecoder().decode(headerBytes))
       if (parsed.status === 0) {
         finish(failure('agent-error', 'curl 正常退出但没解析到状态行。', '可能是非 HTTP 目标或 curl 版本差异，看 stderr。'))
         return
@@ -275,10 +397,10 @@ export function runCurl(spec: CurlSpec, cfg: RunConfig, deps: RunDeps = {}): Pro
         status: parsed.status,
         statusText: parsed.statusText,
         headers: parsed.headers,
-        body: concat(body),
-        totalBytes: body.total,
-        truncated: body.dropped,
-        ttfbMs: (body.firstByteAt ?? startedAt) - startedAt,
+        body: bodyBytes,
+        totalBytes: totalBody,
+        truncated,
+        ttfbMs: (firstByteAt ?? startedAt) - startedAt,
         totalMs: endedAt - startedAt
       })
       finish({ ok: true, response: resp })

@@ -7,7 +7,8 @@ import {
   classifyExit,
   contentTypeFrom,
   parseStatusAndHeaders,
-  runCurl
+  runCurl,
+  splitHeadBody
 } from '../src/curl-runner'
 import type { WireResponse } from '../src/wire'
 
@@ -46,6 +47,35 @@ describe('contentTypeFrom', () => {
   it('大小写不敏感取首个', () => {
     expect(contentTypeFrom([['CONTENT-TYPE', 'text/html; charset=utf-8']])).toBe('text/html; charset=utf-8')
     expect(contentTypeFrom([['server', 'nginx']])).toBe('')
+  })
+})
+
+describe('splitHeadBody', () => {
+  const enc = (s: string): Uint8Array => new TextEncoder().encode(s)
+  it('CRLF 头块：headerEnd 落在 \\r\\n\\r\\n 之后', () => {
+    const buf = enc('HTTP/1.1 200 OK\r\nX: y\r\n\r\nbody')
+    const r = splitHeadBody(buf)
+    expect(r.hasBoundary).toBe(true)
+    expect(r.headerEnd).toBe('HTTP/1.1 200 OK\r\nX: y\r\n\r\n'.length)
+  })
+  it('LF-only 分隔也认', () => {
+    const buf = enc('HTTP/1.1 200 OK\nX: y\n\nbody')
+    const r = splitHeadBody(buf)
+    expect(r.hasBoundary).toBe(true)
+    expect(r.headerEnd).toBe('HTTP/1.1 200 OK\nX: y\n\n'.length)
+  })
+  it('无空行边界：整段当头、体空', () => {
+    const buf = enc('not-an-http\r\n')
+    const r = splitHeadBody(buf)
+    expect(r.hasBoundary).toBe(false)
+    expect(r.headerEnd).toBe(buf.length)
+  })
+  it('体里也含 \\r\\n\\r\\n 时只在首个边界切（二进制安全）', () => {
+    const buf = enc('HTTP/1.1 200 OK\r\n\r\nA\r\n\r\nB')
+    const r = splitHeadBody(buf)
+    expect(r.headerEnd).toBe('HTTP/1.1 200 OK\r\n\r\n'.length)
+    // 体从首个边界起，保留其后的 \r\n\r\n 原样
+    expect(new TextDecoder().decode(buf.subarray(r.headerEnd))).toBe('A\r\n\r\nB')
   })
 })
 
@@ -107,19 +137,17 @@ function fakeChild(): {
   stdin: PassThrough
   stdout: PassThrough
   stderr: PassThrough
-  headers: PassThrough
 } {
   const child = new EventEmitter() as EventEmitter & Record<string, unknown>
   const stdin = new PassThrough()
   const stdout = new PassThrough()
   const stderr = new PassThrough()
-  const headers = new PassThrough()
   child.stdin = stdin
   child.stdout = stdout
   child.stderr = stderr
-  child.stdio = [stdin, stdout, stderr, headers]
+  child.stdio = [stdin, stdout, stderr]
   child.kill = (): void => {}
-  return { child, stdin, stdout, stderr, headers }
+  return { child, stdin, stdout, stderr }
 }
 
 const spec = (): ReturnType<typeof createDefaultSpec> => {
@@ -129,6 +157,7 @@ const spec = (): ReturnType<typeof createDefaultSpec> => {
   return s
 }
 
+// curl -i 把头块前置到 stdout、与体同一条流：这里把 headerBlock + body 依次写进 stdout 复现。
 async function withRun(
   bodyChunks: (string | Uint8Array)[],
   headerBlock: string,
@@ -143,14 +172,13 @@ async function withRun(
     now: () => clock++
   })
   // PassThrough 的 data 是异步派发：写完后必须等流把 data 全吐出来，再 emit close，
-  // 否则 runCurl 可能还没收到 body/header 就走了收尾分支。
-  f.headers.write(headerBlock)
-  f.headers.end()
+  // 否则 runCurl 可能还没收到 stdout/stderr 就走了收尾分支。
+  f.stdout.write(Buffer.from(headerBlock))
   for (const c of bodyChunks) f.stdout.write(typeof c === 'string' ? Buffer.from(c) : c)
   if (opts.errText) f.stderr.write(Buffer.from(opts.errText))
   f.stderr.end()
   f.stdout.end()
-  await Promise.all([onceEnd(f.headers), onceEnd(f.stdout), onceEnd(f.stderr)])
+  await Promise.all([onceEnd(f.stdout), onceEnd(f.stderr)])
   if (opts.errorEv) f.child.emit('error', opts.errorEv)
   else f.child.emit('close', code)
   return p
@@ -230,11 +258,10 @@ describe('runCurl 注入面（shell:false + 程序名钉死 curl）', () => {
     s.rawArgs = ['--output', '/tmp/out.bin']
 
     const p = runCurl(s, { maxTimeMs: 30_000, maxPreviewBytes: 1024 }, { spawnFn, now: () => 1 })
-    f.headers.write('HTTP/1.1 200 OK\r\n\r\n')
-    f.headers.end()
+    f.stdout.write(Buffer.from('HTTP/1.1 200 OK\r\n\r\n'))
     f.stdout.end()
     f.stderr.end()
-    await Promise.all([onceEnd(f.headers), onceEnd(f.stdout), onceEnd(f.stderr)])
+    await Promise.all([onceEnd(f.stdout), onceEnd(f.stderr)])
     f.child.emit('close', 0)
     await p
 
@@ -249,9 +276,11 @@ describe('runCurl 注入面（shell:false + 程序名钉死 curl）', () => {
     // 合法 rawArgs 原样进 argv（逐 token 保真）
     expect(args).toContain('--output')
     expect(args).toContain('/tmp/out.bin')
-    // runner 追加的三路分离与封顶确实在 argv 里
-    expect(args).toContain('--dump-header')
-    expect(args).toContain('fd://3')
+    // runner 追加的头/体分离（-i）与封顶（-m）确实在 argv 里
+    expect(args).toContain('-i')
     expect(args).toContain('-m')
+    // 已证伪的 fd:// 方案不得再回来
+    expect(args).not.toContain('--dump-header')
+    expect(args).not.toContain('fd://3')
   })
 })
