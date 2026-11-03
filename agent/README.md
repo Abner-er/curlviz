@@ -25,7 +25,7 @@ cd agent
 CURLVIZ_TOKEN=随便一个长随机串 \
 CURLVIZ_ALLOW=internal.api,*.svc.cluster.local,10.0.0.0/8 \
 CURLVIZ_ALLOWED_ORIGINS=https://你的前端域名 \
-npm start          # = vite-node src/server.ts，默认端口 8788
+npm start          # = vite-node src/main.ts（运行入口；server.ts 现为纯库不自启），默认端口 8788
 ```
 
 探活（不触发 curl）：
@@ -84,6 +84,6 @@ curl http://127.0.0.1:8788/healthz
 
 - **生成 token**：`openssl rand -hex 32`，填进 `CURLVIZ_TOKEN`。前端"执行机管理"里填同一 token
   （token 只存会话内存，刷新需重填——见决策②）。
-- **常驻**：`systemd` 服务 `ExecStart=... vite-node src/server.ts`（或经 `tsc` 产物 + `node`），
+- **常驻**：`systemd` 服务 `ExecStart=... vite-node src/main.ts`（或经 `tsc` 产物 `node dist/main.js`），
   配 `Restart=always`。进程内不写业务数据，崩了直接重起无损。
 - **放行走内网**：`CURLVIZ_ALLOW` 只加你真正要测的段（例：`10.20.0.0/16,api.svc`），不要图省事写 `0.0.0.0/0`。

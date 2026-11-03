@@ -186,8 +186,6 @@ export function startAgent(): ReturnType<typeof httpCreateServer> {
   return server
 }
 
-// 仅在作为脚本运行时自启。注意 `vite-node src/server.ts` 下 process.argv[1] 是 vite-node
-// 自己的二进制、目标文件在别的参数里，所以不能只测 argv[1]——扫整个 argv 找 server 目标。
-// 被 import（如将来集成测）时不自启。
-const invokedAsScript = process.argv.some((a) => /src[\\/]server\.(ts|js)$/.test(a))
-if (invokedAsScript) startAgent()
+// 本文件是纯库（只导出 createAgentServer / handleExec / startAgent），不在此自启。
+// 自启逻辑原先靠扫 process.argv 找 server 目标，但 `vite-node src/server.ts` 下 argv 并不
+// 含该路径，导致静默不启动。真正的运行入口在 main.ts（`npm start` = vite-node src/main.ts）。
