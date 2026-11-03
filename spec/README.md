@@ -455,7 +455,7 @@ M2 必须先定的四条规矩（分享格式、脱敏遮盖形状、多环境�
 
 ## 13. 远程执行 wire 契约（M4b/M4c：transport 抽象 + agent /exec）
 
-> 状态：**M4b（transport 抽象 + `buildArgv` + web 远程执行）与 M4c（agent `/exec` 服务）已落地**——`/exec` 的 wire 形状由 web transport mock 单测（不发真请求）与 agent 拒绝/注入测试双钉。M4d（真机联调 `runCurl` 成功路径，依赖 Linux `fd://`）待用户在 ECS 上验。安全红线正文见 docs/PLAN.md §17.2，本节只钉字节长什么样。
+> 状态：**M4b（transport 抽象 + `buildArgv` + web 远程执行）与 M4c（agent `/exec` 服务）已落地**——`/exec` 的 wire 形状由 web transport mock 单测（不发真请求）与 agent 拒绝/注入测试双钉。M4d（真机联调 `runCurl` 成功路径）**已在真 Linux 验**（Termux/Alpine aarch64、curl 8.14.1）：`runCurl` 改用 curl **`-i`** 单 stdout 流 + 内存空行切头体（旧 `--dump-header fd://3` 实测证伪，且不再依赖 Linux 专属 fd://，Windows curl 亦可移植）。安全红线正文见 docs/PLAN.md §17.2，本节只钉字节长什么样。
 
 前端把一条 spec 交给用户自己的 ECS 跑真 curl，这条通道的线上格式在这里钉死：web 的 agent-transport 与 agent/ 服务端都按本节实现，Kotlin 侧将来复用同一形状。
 

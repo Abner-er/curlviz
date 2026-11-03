@@ -11,10 +11,12 @@ agent 用 `spawn('curl', argv, {shell:false})` 跑它，把响应按 wire 契约
 
 - ✅ 已实现且本机测过：wire 编解码、IP/CIDR 位运算、SSRF 白名单闸门、curl 输出归一、
   HTTP 外壳（token / Origin / 契约 / 限流 / 请求体上限 / 脱敏审计）、拒绝路径的实机 HTTP 测。
-  本机 `agent` 单测 90 passed / 8 files、`tsc --noEmit` 0 错误。
-- ⚠️ `runCurl` 真跑一条 curl 依赖 **Linux curl 的 `fd://`**（响应头走 `--dump-header fd://3`）
-  与末尾追加的 `-m` 封顶。本机（Windows）不发真请求（遵守"不发废请求"），这条成功路径留到
-  **M4d 在你的 ECS（Linux）上真机联调**验。
+  本机 `agent` 单测 95 passed / 8 files、`tsc --noEmit` 0 错误。
+- ✅ `runCurl` 成功路径已在真机验（M4d，Termux/Alpine aarch64、curl 8.14.1）：
+  用 curl **`-i`** 把响应头与体收在**同一条 stdout**，按首个空行内存切分（`splitHeadBody`）——
+  不碰 fd、不写盘，Linux 与 Windows 的 curl 行为一致（旧 `--dump-header fd://3` 已**实测证伪**：
+  curl 8.14.1 把入参当字面文件名，`fopen("fd://3")` 失败、退出码 23）。真机 `/exec` 打本地 echo
+  返回 `ok:true`/200、headers 解析自 `-i` 流、body base64、`totalBytes` 精确、末尾 `-m` 封顶生效。
 - ❌ v1 拒绝跟随重定向（`-L/--location`）：重定向后的目标在发请求前定不下来，SSRF 白名单管不住。
   要测会跳转的地址，请关掉"跟随重定向"、把最终地址单独发一条。
 
