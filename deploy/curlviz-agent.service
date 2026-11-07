@@ -1,0 +1,25 @@
+[Unit]
+Description=CurlViz Agent — 远程执行 curl 的服务
+After=network.target
+
+[Service]
+Type=simple
+# install.sh 会把 __INSTALL_DIR__ 替换成实际路径
+WorkingDirectory=__INSTALL_DIR__
+EnvironmentFile=/etc/curlviz/.env
+# vite-node 在 PATH 里（来自 node_modules/.bin）
+ExecStart=/usr/bin/env node_modules/.bin/vite-node agent/src/main.ts
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=curlviz-agent
+
+# 安全加固：禁止提权、禁止写 /home /root（审计日志只走 journal）
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/log/curlviz
+
+[Install]
+WantedBy=multi-user.target

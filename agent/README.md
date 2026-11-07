@@ -72,6 +72,8 @@ curl http://127.0.0.1:8788/healthz
 
 ## 生产部署建议
 
+**一键部署**：`deploy/` 目录有完整的 Linux ECS 部署套件（`install.sh` + systemd 单元 + nginx 反代 + `.env` 模板 + README），跑 `sudo bash deploy/install.sh --domain curlviz.example.com` 即可。**本地开发**（Windows / macOS）不需要 nginx / certbot，直接 `npm start` 起 agent。
+
 - **同源反代 + TLS**：把 web（PWA）与 agent 挂在同一个主机名下（如 `/exec` 反代到本 agent 端口），
   浏览器同源直连、**免 CORS**。nginx 片段：
 
