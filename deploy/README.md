@@ -19,8 +19,19 @@ agent ──spawn──▶ 真 curl ──▶ 你的内网目标（--resolve 在
 |---|---|---|
 | ECS | Linux（Ubuntu 20.04+ / Debian 11+ / CentOS 8+） | 需 root 权限 |
 | 依赖 | node ≥ 20、curl、nginx、certbot、git | 脚本会检查 |
-| 域名 | 已解析到 ECS 公网 IP | certbot 签证书必须用域名，裸 IP 签不了正经证书 |
+| 域名 | 已解析到 ECS 公网 IP | certbot 签证书必须用域名，裸 IP 签不了正经证书；**没域名可用 DuckDNS 免费子域名，见下** |
 | 端口 | 80（HTTP，certbot 验证用）、443（HTTPS） | 安全组/防火墙放行 |
+
+## 没有域名？用 DuckDNS 免费子域名
+
+certbot 签正经 TLS 证书必须有域名（裸 IP 签不了）。不想买域名就用 [DuckDNS](https://www.duckdns.org)——免费、用 GitHub/Google 账号登录即可、无需邮箱验证：
+
+1. 打开 https://www.duckdns.org ，用 GitHub / Google 账号登录；
+2. 在 `sub domain` 框填一个名字（如 `mycurlviz`），点 `add domain`，得到 `mycurlviz.duckdns.org`；
+3. 在 `current ip` 框填你的 **ECS 公网 IP**，点 `update ip`（这就是把子域名解析到 ECS）；
+4. 部署时 `--domain mycurlviz.duckdns.org` 即可，certbot 正常签证书 + 自动续签。
+
+> DuckDNS 的 IP 变了要手动 update（ECS 公网 IP 一般固定，不用管）。页面顶部那串 `token` 是 DuckDNS 自己的 API token，**与 CurlViz 的 token 无关**，别填错。
 
 ## 一键安装
 
@@ -120,7 +131,7 @@ sudo journalctl -u curlviz-agent -n 50 --no-pager
 手动重试：
 
 ```bash
-sudo certbot --nginx -d curlviz.example.com
+sudo certbot --nginx -d curlviz.example.com --redirect
 ```
 
 ### 前端访问 502 Bad Gateway
@@ -173,8 +184,7 @@ sudo rm /etc/systemd/system/curlviz-agent.service
 sudo systemctl daemon-reload
 
 # 删除 nginx 配置
-sudo rm /etc/nginx/sites-available/curlviz
-sudo rm /etc/nginx/sites-enabled/curlviz
+sudo rm /etc/nginx/conf.d/curlviz.conf
 sudo nginx -t && sudo systemctl reload nginx
 
 # 删除证书（可选）

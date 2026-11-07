@@ -141,33 +141,41 @@ else
 fi
 
 # ─── 配置 nginx ───────────────────────────────────────────────────────────────
+# 写到 conf.d（Debian 与 CentOS 的 nginx.conf 默认都 include 这个目录），
+# 不用 sites-available/sites-enabled（CentOS 没有）。
 info "配置 nginx 反代..."
-NGINX_SITE="/etc/nginx/sites-available/curlviz"
-sed -e "s|__DOMAIN__|$DOMAIN|g" \
-    -e "s|__INSTALL_DIR__|$INSTALL_DIR|g" \
-    "$INSTALL_DIR/deploy/nginx.conf" > "$NGINX_SITE"
+NGINX_SITE="/etc/nginx/conf.d/curlviz.conf"
+mkdir -p /var/www/certbot
 
-# 启用站点（如果 sites-enabled 目录存在）
-if [[ -d /etc/nginx/sites-enabled ]]; then
-    ln -sf "$NGINX_SITE" /etc/nginx/sites-enabled/curlviz
+# 仅当配置不存在时写模板：重跑时保留 certbot 已注入的 TLS 配置（幂等）。
+# 模板是纯 HTTP，nginx -t 不会因证书尚不存在而失败；TLS 由下面的 certbot 加。
+if [[ ! -f "$NGINX_SITE" ]]; then
+    sed -e "s|__DOMAIN__|$DOMAIN|g" \
+        -e "s|__INSTALL_DIR__|$INSTALL_DIR|g" \
+        "$INSTALL_DIR/deploy/nginx.conf" > "$NGINX_SITE"
+    success "已写入 $NGINX_SITE（HTTP 模板）"
+else
+    warn "$NGINX_SITE 已存在，跳过写入（保留现有/TLS 配置）"
+    warn "如需重新生成：rm $NGINX_SITE 后重跑本脚本"
 fi
 
-# 测试配置
+# 测试配置（此时无证书引用，纯 HTTP，必过）
 if ! nginx -t; then
     error "nginx 配置测试失败"
     exit 1
 fi
 systemctl reload nginx
-success "nginx 已加载"
+success "nginx 已加载（HTTP）"
 
 # ─── 签 TLS 证书 ──────────────────────────────────────────────────────────────
-info "certbot 签证书（需要域名已解析到本机）..."
-mkdir -p /var/www/certbot
+# certbot --nginx 会：经 HTTP-01 验证签证书 → 自动改写上面的 conf 加 listen 443 ssl
+# + ssl_certificate + 80→443 跳转（--redirect）→ reload nginx。
+info "certbot 签证书（需要域名已解析到本机、80 端口放行）..."
 if certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --redirect; then
-    success "TLS 证书已签发并自动续签"
+    success "TLS 证书已签发，nginx 已自动加 HTTPS + 跳转，certbot 定时续签"
 else
-    warn "certbot 失败（域名未解析？），nginx 仍可用 HTTP 访问"
-    warn "稍后手动跑：certbot --nginx -d $DOMAIN"
+    warn "certbot 失败（域名未解析到本机？80 端口未放行？）"
+    warn "nginx 仍可用 HTTP 访问；修好后手动跑：certbot --nginx -d $DOMAIN --redirect"
 fi
 
 # ─── 完成 ─────────────────────────────────────────────────────────────────────
