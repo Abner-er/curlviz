@@ -28,6 +28,9 @@ spec/.tmp/
 # 本地核对用的临时脚本/输出（不入库）
 _wip/
 
+# 私有工作日志/记忆（不公开入库）
+.workbuddy/
+
 # 依赖重装时挪开的旧 node_modules（可手动删）
 *.node_modules_stale/
 .node_modules_stale/
