@@ -40,9 +40,31 @@ sudo bash deploy/install.sh --self-signed --ip <你的ECS公网IP>
 | 项 | 要求 | 说明 |
 |---|---|---|
 | ECS | Linux（Ubuntu 20.04+ / Debian 11+ / CentOS 8+） | 需 root 权限 |
-| 依赖 | node ≥ 20、curl、nginx、git、openssl | 脚本会检查；**certbot 仅受信证书模式需要** |
+| 依赖 | node ≥ 20、curl、nginx、git、openssl | 脚本会检查；**node 太老/没装时脚本可代装 LTS 二进制**（见下「node 版本不够」节）；**certbot 仅受信证书模式需要** |
 | 域名 | 仅受信证书模式需要 | 自签模式用 IP 即可，无需域名；受信模式没域名可用 DuckDNS 免费子域名（见下） |
 | 端口 | 自签：443（可用 `--https-port` 换）；受信：80 + 443（固定） | 安全组/防火墙放行；被占时脚本预检会报错并给出出路（见「已有 nginx / 端口被占」节） |
+
+## node 版本不够 / 没装 node？
+
+发行版 apt/yum 源的 node 普遍是 12～18，**装不到 20+**（本项目要求 node ≥ 20；M4d 真机是在 v20.15.1 上跑通的，现在建议直接上 22 LTS）。`install.sh` 检测到 node 缺失或过旧时不再直接退出，而是给两条路：**脚本代装**（会问 `是否代装 node v22.20.0 到 /usr/local？[y/N]`）或**打印好手动命令让你自己跑**。
+
+手动就两条命令，走 **npmmirror 国内镜像，不需要梯子**（`x86_64` 用 `linux-x64`，`aarch64`/`arm64` 用 `linux-arm64`，以 `uname -m` 为准）：
+
+```bash
+# x86_64（绝大多数 ECS）
+curl -fSL https://registry.npmmirror.com/-/binary/node/v22.20.0/node-v22.20.0-linux-x64.tar.gz -o /tmp/node.tar.gz
+sudo tar -xzf /tmp/node.tar.gz -C /usr/local --strip-components=1
+
+# aarch64 / arm64（如鲲鹏、部分海外 ARM 实例）：把上面两条里的 linux-x64 换成 linux-arm64
+
+node -v && npm -v   # 应显示 v22.20.0
+```
+
+为什么装到 `/usr/local` 就够了：`/usr/local/bin` 在 shell 和 **systemd 服务默认 PATH** 里都排在 `/usr/bin` 前面，所以新版 node 天然盖住发行版的旧 node，**不用动 apt、不用改 PATH、不用 `source` 什么 rc 文件**；`vite-node` 的 shebang 是 `#!/usr/bin/env node`，跟着 PATH 走，`curlviz-agent` 服务重启后即使用新 node。
+
+> 装完 node 后重跑 `install.sh` 即可（幂等）。升级 LTS 版本只改脚本顶部 `NODE_LTS=` 一行。
+>
+> 可选加速：`sudo npm config set registry https://registry.npmmirror.com` 让 `npm ci` 也走国内镜像（大陆 ECS 上 `npm ci` 常是安装最慢的一步）。
 
 ## 已有 nginx / 端口被占？（兼容性）
 
@@ -88,7 +110,7 @@ sudo bash deploy/install.sh --domain curlviz.example.com     # 受信，需域�
 ```
 
 脚本会：
-1. 检查依赖（node / curl / nginx / git / openssl；certbot 仅受信模式）+ 预检端口占用（被非 nginx 占用会报错并给出出路）
+1. 检查依赖（curl / nginx / git / openssl；certbot 仅受信模式）；node 单独检查（≥ 20，缺失/过旧时可代装 LTS 二进制，见「node 版本不够」节）；再预检端口占用（被非 nginx 占用会报错并给出出路）
 2. 复制代码到 `/opt/curlviz`（默认，可用 `--install-dir` 改）
 3. `npm ci` 装依赖 + `vite build` 构建前端
 4. 生成 `/etc/curlviz/.env`（含随机 token + 内网白名单）
@@ -162,7 +184,7 @@ sudo journalctl -u curlviz-agent -n 50 --no-pager
 常见原因：
 - `.env` 文件权限不对（应 `chmod 600`）
 - 端口 8788 被占用（`sudo netstat -tlnp | grep 8788`）
-- node 版本过低（需 ≥ 20）
+- node 版本过低 / 找不到 node（需 ≥ 20；见上面「node 版本不够」节的两条命令）
 
 ### certbot 签证书失败
 

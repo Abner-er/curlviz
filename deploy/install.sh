@@ -8,7 +8,8 @@
 #
 # 前置条件（脚本会检查）：
 #   - root 权限
-#   - node ≥ 20、curl、nginx、git、openssl（两种模式都要）
+#   - node ≥ 20（过旧/缺失时脚本可代装 npmmirror 的 v22 LTS 二进制到 /usr/local）
+#   - curl、nginx、git、openssl（两种模式都要）
 #   - certbot（仅受信证书模式要）
 #   - 受信证书模式：域名已解析到本机公网 IP
 #   - 自签模式：无需域名/备案/梯子，浏览器首次访问需接受证书警告
@@ -99,6 +100,71 @@ check_port() {
     fi
 }
 
+# ─── node ≥ 20 检查与代装（发行版自带普遍太老，apt 装不到 20+）────────────────
+# 过旧/缺失时给出走 npmmirror 国内镜像的精确命令，并可由脚本直接代装 LTS 二进制到
+# /usr/local（/usr/local/bin 在 PATH 里优先于 /usr/bin，天然覆盖发行版旧 node；
+# systemd 服务默认 PATH 同样优先 /usr/local/bin）。
+ensure_node() {
+    local ver="" major="" arch ans
+    if command -v node &>/dev/null; then
+        ver=$(node -v 2>/dev/null || true)
+        major=$(printf '%s' "$ver" | sed 's/v//' | cut -d. -f1)
+        if [[ "$major" =~ ^[0-9]+$ ]] && [[ "$major" -ge 20 ]]; then
+            success "node ${ver}（≥ 20）"
+            return 0
+        fi
+        warn "node 版本过低：${ver:-无法解析}（需要 ≥ 20；发行版 apt 源的 node 普遍太老，推荐直接装 LTS 二进制）"
+    else
+        warn "未检测到 node（发行版 apt 源的 node 普遍 < 20，推荐直接装 LTS 二进制）"
+    fi
+    case "$(uname -m)" in
+        x86_64)        arch=x64 ;;
+        aarch64|arm64) arch=arm64 ;;
+        *)             arch="" ;;
+    esac
+    if [[ -z "$arch" ]]; then
+        error "无法识别架构 $(uname -m)，请自行安装 node ≥ 20 后重跑"
+        exit 1
+    fi
+    local url="https://registry.npmmirror.com/-/binary/node/${NODE_LTS}/node-${NODE_LTS}-linux-${arch}.tar.gz"
+    if ! command -v curl &>/dev/null; then
+        error "代装需要 curl；请先装 curl，或手动执行："
+        error "  curl -fSL $url -o /tmp/node.tar.gz"
+        error "  sudo tar -xzf /tmp/node.tar.gz -C /usr/local --strip-components=1"
+        exit 1
+    fi
+    # 非交互（如 curl | bash）时 read 失败按 N 处理，绝不默认改系统
+    ans=""
+    read -rp "是否代装 node ${NODE_LTS}（linux-${arch}，npmmirror 国内镜像 ~54MB）到 /usr/local？[y/N] " ans || true
+    if [[ "$ans" != y && "$ans" != Y ]]; then
+        info "手动安装（两条命令，走国内镜像无需梯子）："
+        echo "  curl -fSL $url -o /tmp/node.tar.gz"
+        echo "  sudo tar -xzf /tmp/node.tar.gz -C /usr/local --strip-components=1"
+        echo "  node -v && npm -v   # 应显示 v22.x"
+        exit 1
+    fi
+    info "下载 node ${NODE_LTS}（linux-${arch}）..."
+    if ! curl -fSL --max-time 300 "$url" -o /tmp/curlviz-node.tar.gz; then
+        error "下载失败（网络？镜像挂了？），可稍后重试或手动执行上面提示的命令"
+        exit 1
+    fi
+    info "解压到 /usr/local..."
+    if ! tar -xzf /tmp/curlviz-node.tar.gz -C /usr/local --strip-components=1; then
+        error "解压失败（磁盘空间？权限需 root？）"
+        exit 1
+    fi
+    rm -f /tmp/curlviz-node.tar.gz
+    hash -r 2>/dev/null || true
+    ver=$(node -v 2>/dev/null || true)
+    major=$(printf '%s' "$ver" | sed 's/v//' | cut -d. -f1)
+    if [[ "$major" =~ ^[0-9]+$ ]] && [[ "$major" -ge 20 ]]; then
+        success "node ${ver} 已就绪（/usr/local/bin/node，PATH 优先于发行版旧 node）"
+    else
+        error "代装后 node 仍不可用（PATH 缓存？重开 shell 或检查 /usr/local/bin/node）"
+        exit 1
+    fi
+}
+
 # ─── 参数解析 ─────────────────────────────────────────────────────────────────
 DOMAIN=""
 IP=""
@@ -106,6 +172,7 @@ SELF_SIGNED=false
 INSTALL_DIR="/opt/curlviz"
 HTTP_PORT=80
 HTTPS_PORT=443
+NODE_LTS=v22.20.0   # 代装 node 用的 LTS 版本（npmmirror 镜像；脚本底线仍是 ≥ 20，升级时改这里）
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -206,7 +273,8 @@ fi
 
 info "检查前置依赖..."
 # openssl 两种模式都要（生成 token / 自签证书）；certbot 仅受信证书模式要。
-DEPS=(node curl nginx git openssl)
+# node 单独走 ensure_node（apt 源的 node 普遍太老，缺失/过旧时代装 LTS 二进制）
+DEPS=(curl nginx git openssl)
 if [[ "$SELF_SIGNED" != true ]]; then
     DEPS+=(certbot)
 fi
@@ -216,14 +284,9 @@ for cmd in "${DEPS[@]}"; do
         exit 1
     fi
 done
+success "依赖检查通过（${DEPS[*]}）"
 
-# 检查 node 版本 ≥ 20
-NODE_VERSION=$(node -v | sed 's/v//' | cut -d. -f1)
-if [[ $NODE_VERSION -lt 20 ]]; then
-    error "node 版本过低（当前 v${NODE_VERSION}，需要 ≥ 20）"
-    exit 1
-fi
-success "依赖检查通过（node v${NODE_VERSION}）"
+ensure_node
 
 # ─── 端口预检（在复制代码/构建之前，冲突早发现早退出）─────────────────────────
 info "预检端口占用..."
