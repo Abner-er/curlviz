@@ -42,7 +42,25 @@ sudo bash deploy/install.sh --self-signed --ip <你的ECS公网IP>
 | ECS | Linux（Ubuntu 20.04+ / Debian 11+ / CentOS 8+） | 需 root 权限 |
 | 依赖 | node ≥ 20、curl、nginx、git、openssl | 脚本会检查；**certbot 仅受信证书模式需要** |
 | 域名 | 仅受信证书模式需要 | 自签模式用 IP 即可，无需域名；受信模式没域名可用 DuckDNS 免费子域名（见下） |
-| 端口 | 自签：443；受信：80 + 443 | 安全组/防火墙放行（80 是 certbot HTTP-01 验证用） |
+| 端口 | 自签：443（可用 `--https-port` 换）；受信：80 + 443（固定） | 安全组/防火墙放行；被占时脚本预检会报错并给出出路（见「已有 nginx / 端口被占」节） |
+
+## 已有 nginx / 端口被占？（兼容性）
+
+**机器上已有 nginx、跑着别的站点**——完全兼容，不用停现有服务：
+
+- 配置**增量**写入 `/etc/nginx/conf.d/curlviz.conf`（唯一文件名，已存在则不覆盖），**不碰**你现有的任何站点配置；
+- 模板不抢 `default_server`，按 `server_name`（HTTP）/ SNI（HTTPS）路由，与现有站点在同一端口上互不干扰；
+- 用 `reload` 平滑加载（nginx 已在跑时），现有站点**零停机**；nginx 装了但没启动时脚本会自动 `enable + start`；
+- 脚本的端口预检会把「端口由本机 nginx 持有」判为**正常共存**，直接继续。
+
+**80/443 被非 nginx 进程占用**（Apache、Caddy、docker-proxy 等）——脚本在复制代码/构建**之前**预检，报出占用进程名并给两条出路：
+
+1. 停掉占用者（`systemctl stop <服务>` / `docker stop <容器>`）后重跑；
+2. 换端口（仅自签模式）：`--http-port 8080 --https-port 8443`，浏览器访问 `https://<IP>:8443`，安全组放行 8443。nginx 监听、HTTP→HTTPS 跳转目标、`.env` 的 `CURLVIZ_ALLOWED_ORIGINS`、打印的 baseUrl 全部自动带端口。
+
+> 受信证书模式固定 80/443——certbot 的 HTTP-01 验证走标准端口，换端口签不了证。要换端口请用自签模式。
+
+**CentOS/RHEL 且 SELinux enforcing**：脚本会自动给 `web/dist` 打 `httpd_sys_content_t` 上下文（否则静态文件 403）；若 `/exec` 反代 502，需手动放行 nginx 网络连接：`sudo setsebool -P httpd_can_network_connect 1`（系统级安全策略，脚本不自动改）。
 
 ## 受信证书模式：没有域名？用 DuckDNS 免费子域名
 
@@ -70,7 +88,7 @@ sudo bash deploy/install.sh --domain curlviz.example.com     # 受信，需域�
 ```
 
 脚本会：
-1. 检查依赖（node / curl / nginx / git / openssl；certbot 仅受信模式）
+1. 检查依赖（node / curl / nginx / git / openssl；certbot 仅受信模式）+ 预检端口占用（被非 nginx 占用会报错并给出出路）
 2. 复制代码到 `/opt/curlviz`（默认，可用 `--install-dir` 改）
 3. `npm ci` 装依赖 + `vite build` 构建前端
 4. 生成 `/etc/curlviz/.env`（含随机 token + 内网白名单）
@@ -171,6 +189,14 @@ sudo systemctl status curlviz-agent
 curl http://127.0.0.1:8788/healthz
 ```
 
+若 agent 正常（healthz 通）但 nginx 仍 502，且系统是 CentOS/RHEL（SELinux enforcing）：SELinux 默认禁止 nginx 向外发起连接，放行：
+
+```bash
+sudo setsebool -P httpd_can_network_connect 1
+```
+
+静态文件 403 则是上下文问题（脚本已自动 chcon，重跑可补）：`sudo chcon -R -t httpd_sys_content_t /opt/curlviz/web/dist`。
+
 ### 前端报 401 Unauthorized
 
 token 不匹配：检查 `/etc/curlviz/.env` 的 `CURLVIZ_TOKEN` 与前端填的是否一致。
@@ -185,17 +211,15 @@ SSRF 白名单拒绝：检查目标地址是否在 `CURLVIZ_ALLOW` 里。
 
 若想彻底消除警告：把 `/etc/curlviz/tls/cert.pem` 分发给团队，各自导入操作系统/浏览器的「受信任根证书颁发机构」即可（导入后该证书被本机信任）。
 
-### 自签证书：大陆 ECS 的 443 被拦
+### 自签证书：大陆 ECS 的 443 被拦 / 端口被占
 
-大陆云厂商可能拦 80/443（备案）。自签走 IP 一般不触发，但若 443 确实被拦，改非标端口（如 8443）：
+大陆云厂商可能拦 80/443（备案），或机器上已有别的服务占着端口。自签模式直接用 `--http-port` / `--https-port` 换非标端口，脚本会自动处理 nginx 监听、HTTP→HTTPS 跳转目标、`.env` 的 `CURLVIZ_ALLOWED_ORIGINS` 和打印的 baseUrl：
 
 ```bash
-# 编辑 nginx 配置，把 listen 443 改成 listen 8443（两处：80 跳转目标也要带端口）
-sudo sed -i 's/listen 443/listen 8443/g; s/listen \[::\]:443/listen [::]:8443/g' /etc/nginx/conf.d/curlviz.conf
-sudo nginx -t && sudo systemctl reload nginx
+sudo bash deploy/install.sh --self-signed --ip <ECS公网IP> --http-port 8080 --https-port 8443
 ```
 
-然后 baseUrl 填 `https://<ECS公网IP>:8443`，并把 `/etc/curlviz/.env` 的 `CURLVIZ_ALLOWED_ORIGINS` 改成 `https://<ECS公网IP>:8443`，`systemctl restart curlviz-agent`。安全组放行 8443。
+然后 baseUrl 填 `https://<ECS公网IP>:8443`，安全组放行 8443。**已部署过想换端口**：先 `sudo rm /etc/nginx/conf.d/curlviz.conf` 再带新端口重跑（配置幂等不覆盖），并按脚本提示同步 `.env` 的 `CURLVIZ_ALLOWED_ORIGINS` 后 `systemctl restart curlviz-agent`。
 
 ### 自签证书：换了 IP 后浏览器报 SAN 不匹配
 
